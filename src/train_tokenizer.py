@@ -1,9 +1,17 @@
 import os
+import sys
+from pathlib import Path
 from tokenizers import ByteLevelBPETokenizer
-from data_processor import extract_dataset, get_dataset_stats
+
+# Add the project root to Python path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from src.data_processor import extract_dataset, get_dataset_stats
 
 def train_tokenizer(
-    texts,
+    texts=None,
     vocab_size=50000,
     min_frequency=2,
     save_dir="tokenizer",
@@ -13,12 +21,20 @@ def train_tokenizer(
     Train a ByteLevelBPE tokenizer on Swahili text data.
     
     Args:
-        texts: List of text samples
+        texts: List of text samples. If None, will load from archive.zip
         vocab_size: Size of the vocabulary
         min_frequency: Minimum frequency for a token to be included
         save_dir: Directory to save the tokenizer
         special_tokens: List of special tokens to add
     """
+    if texts is None:
+        print("Loading dataset...")
+        texts = extract_dataset("archive.zip")
+        stats = get_dataset_stats(texts)
+        print("\nDataset Statistics:")
+        for key, value in stats.items():
+            print(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value}")
+    
     print(f"\nTraining tokenizer with vocab size {vocab_size}...")
     
     # Initialize tokenizer
@@ -50,19 +66,5 @@ def train_tokenizer(
     
     return tokenizer
 
-def main():
-    # Load and process dataset
-    print("Loading dataset...")
-    texts = extract_dataset("archive.zip")
-    
-    # Print dataset statistics
-    stats = get_dataset_stats(texts)
-    print("\nDataset Statistics:")
-    for key, value in stats.items():
-        print(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value}")
-    
-    # Train tokenizer
-    tokenizer = train_tokenizer(texts)
-
 if __name__ == "__main__":
-    main()
+    train_tokenizer()
