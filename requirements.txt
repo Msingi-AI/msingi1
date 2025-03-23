@@ -5,4 +5,4 @@ datasets>=2.12.0
 numpy>=1.24.3
 tqdm>=4.65.0
 wandb>=0.15.4  # for experiment tracking
-# fastmoe will be installed from source
+fastmoe>=1.1.0
