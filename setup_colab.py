@@ -25,7 +25,7 @@ def setup_environment():
     cuda_version = torch.version.cuda
     print(f"\nCUDA version: {cuda_version}")
     
-    # Install FastMoE with specific CUDA version
+    # Install FastMoE
     print("\nInstalling FastMoE...")
     run_command("git clone https://github.com/laekov/fastmoe.git")
     os.chdir("fastmoe")
@@ -38,12 +38,25 @@ def setup_environment():
     run_command("pip install -e .")
     os.chdir("..")
     
-    print("\nVerifying installation...")
+    # Install the msingi1 package in development mode
+    print("\nInstalling msingi1 package...")
+    run_command("git clone https://github.com/your-username/msingi1.git")
+    os.chdir("msingi1")
+    run_command("pip install -e .")
+    os.chdir("..")
+    
+    print("\nVerifying installations...")
     try:
         import fmoe
         print("FastMoE installed successfully!")
     except ImportError as e:
         print(f"Error importing FastMoE: {e}")
+        
+    try:
+        from src.data_processor import SwahiliDataset
+        print("Msingi1 package installed successfully!")
+    except ImportError as e:
+        print(f"Error importing Msingi1: {e}")
     
     print("\nSetup complete!")
 
