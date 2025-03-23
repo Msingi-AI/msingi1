@@ -1,7 +1,12 @@
 from tokenizers import ByteLevelBPETokenizer
 import json
+import sys
 
 def test_tokenizer():
+    # Set console to UTF-8 mode
+    if sys.platform == 'win32':
+        sys.stdout.reconfigure(encoding='utf-8')
+
     # Load the tokenizer
     tokenizer = ByteLevelBPETokenizer(
         "tokenizer/vocab.json",
