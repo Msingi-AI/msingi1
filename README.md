@@ -1,3 +1,6 @@
+![image](https://github.com/user-attachments/assets/e1a5e701-c03b-4a40-a032-9d472c1991ea)
+
+
 # Msingi1: A Swahili Language Model with Mixture of Experts
 
 Msingi1 is an advanced Swahili language model that leverages the Mixture of Experts (MoE) architecture for efficient and scalable natural language processing. Built with PyTorch and FastMoE, it's designed to provide high-quality text generation and understanding for the Swahili language.
