@@ -3,9 +3,6 @@ import zipfile
 import json
 from typing import List, Dict
 from pathlib import Path
-import torch
-from torch.utils.data import Dataset
-from tokenizers import ByteLevelBPETokenizer
 
 def extract_dataset(archive_path: str, extract_dir: str = "data") -> List[str]:
     """
@@ -16,86 +13,42 @@ def extract_dataset(archive_path: str, extract_dir: str = "data") -> List[str]:
         extract_dir: Directory to extract files to
     
     Returns:
-        List of text content from extracted files
+        List of text content from the dataset
     """
-    if not os.path.exists(extract_dir):
-        os.makedirs(extract_dir)
-        
+    # Create extraction directory if it doesn't exist
+    os.makedirs(extract_dir, exist_ok=True)
+    
+    texts = []
+    
+    # Extract the zip file
     with zipfile.ZipFile(archive_path, 'r') as zip_ref:
         zip_ref.extractall(extract_dir)
-    
-    text_files = []
-    for root, _, files in os.walk(extract_dir):
-        for file in files:
-            if file.endswith('.txt'):
-                with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
-                    text_files.append(f.read())
-    
-    return text_files
-
-class SwahiliDataset(Dataset):
-    """Dataset class for Swahili text data."""
-    
-    def __init__(
-        self,
-        texts: List[str],
-        tokenizer: ByteLevelBPETokenizer,
-        max_length: int = 1024,
-        stride: int = 512
-    ):
-        """
-        Initialize the dataset.
         
-        Args:
-            texts: List of text samples
-            tokenizer: ByteLevelBPE tokenizer
-            max_length: Maximum sequence length
-            stride: Stride for sliding window tokenization
-        """
-        self.texts = texts
-        self.tokenizer = tokenizer
-        self.max_length = max_length
-        self.stride = stride
-        self.examples = []
-        
-        # Process all texts into overlapping chunks
-        for text in texts:
-            # Tokenize the entire text
-            encoded = self.tokenizer.encode(text)
-            
-            # Create chunks with overlap
-            for i in range(0, len(encoded.ids), stride):
-                chunk_ids = encoded.ids[i:i + max_length]
-                if len(chunk_ids) < max_length:  # Pad if needed
-                    chunk_ids = chunk_ids + [self.tokenizer.token_to_id("<pad>")] * (max_length - len(chunk_ids))
-                elif len(chunk_ids) > max_length:  # Truncate if needed
-                    chunk_ids = chunk_ids[:max_length]
-                
-                # Create input_ids and labels
-                self.examples.append({
-                    "input_ids": chunk_ids[:-1],  # All tokens except last
-                    "labels": chunk_ids[1:]  # All tokens except first
-                })
+        # Process each file in the archive
+        for file_name in zip_ref.namelist():
+            if file_name.endswith('.txt'):
+                # Read text files directly from zip
+                with zip_ref.open(file_name) as f:
+                    content = f.read().decode('utf-8', errors='ignore')
+                    texts.append(content)
+            elif file_name.endswith('.json'):
+                # Parse JSON files
+                with zip_ref.open(file_name) as f:
+                    content = json.loads(f.read().decode('utf-8', errors='ignore'))
+                    # If the JSON contains a 'text' field, extract it
+                    if isinstance(content, dict) and 'text' in content:
+                        texts.append(content['text'])
+                    elif isinstance(content, list):
+                        # If it's a list of documents, extract text from each
+                        for item in content:
+                            if isinstance(item, dict) and 'text' in item:
+                                texts.append(item['text'])
     
-    def __len__(self) -> int:
-        """Return the number of examples in the dataset."""
-        return len(self.examples)
+    # Remove empty strings and strip whitespace
+    texts = [text.strip() for text in texts if text.strip()]
     
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        """
-        Get a single example from the dataset.
-        
-        Args:
-            idx: Index of the example
-        
-        Returns:
-            Dictionary with input_ids and labels as torch tensors
-        """
-        example = self.examples[idx]
-        return {
-            "input_ids": torch.tensor(example["input_ids"], dtype=torch.long),
-            "labels": torch.tensor(example["labels"], dtype=torch.long)
-        }
+    print(f"Loaded {len(texts)} text samples from the dataset")
+    return texts
 
 def get_dataset_stats(texts: List[str]) -> Dict:
     """
