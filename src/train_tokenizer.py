@@ -12,25 +12,20 @@ from src.data_processor import extract_dataset, get_dataset_stats
 
 def train_tokenizer(
     texts=None,
-    vocab_size=32000,  # Reduced from 50k to 32k for better efficiency
-    min_frequency=3,   # Increased from 2 to 3 to reduce noise
+    vocab_size=50000,
+    min_frequency=2,
     save_dir="tokenizer",
-    special_tokens=["<s>", "</s>", "<unk>", "<pad>", "<mask>", "<sw>"]  # Added Swahili marker and mask token
+    special_tokens=["<s>", "</s>", "<unk>", "<pad>"]
 ):
     """
-    Train a ByteLevelBPE tokenizer optimized for Swahili text data.
+    Train a ByteLevelBPE tokenizer on Swahili text data.
     
     Args:
         texts: List of text samples. If None, will load from archive.zip
-        vocab_size: Size of the vocabulary (32k is optimal for most languages)
+        vocab_size: Size of the vocabulary
         min_frequency: Minimum frequency for a token to be included
         save_dir: Directory to save the tokenizer
-        special_tokens: List of special tokens including:
-            - <s>, </s>: Start/end of sequence
-            - <unk>: Unknown token
-            - <pad>: Padding token
-            - <mask>: Masked language modeling
-            - <sw>: Swahili language marker
+        special_tokens: List of special tokens to add
     """
     if texts is None:
         print("Loading dataset...")
