@@ -7,173 +7,253 @@ from tqdm import tqdm
 import wandb
 import os
 from pathlib import Path
+import math
+from typing import Optional, List
+import numpy as np
+from tokenizers import Tokenizer
 
 class SwahiliDataset(Dataset):
-    def __init__(self, texts, tokenizer, max_length):
-        self.encodings = tokenizer(
-            texts,
-            truncation=True,
-            padding='max_length',
-            max_length=max_length,
-            return_tensors='pt'
-        )
+    def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
+        # Load the trained tokenizer
+        self.tokenizer = Tokenizer.from_file(tokenizer_path)
         
-    def __getitem__(self, idx):
-        item = {key: val[idx] for key, val in self.encodings.items()}
-        item['labels'] = item['input_ids'].clone()
-        return item
+        # Encode all texts
+        self.examples = []
+        for text in texts:
+            # Encode and add BOS/EOS tokens
+            encoded = self.tokenizer.encode(text)
+            input_ids = [self.tokenizer.token_to_id("<s>")] + encoded.ids + [self.tokenizer.token_to_id("</s>")]
+            
+            # Create overlapping sequences of max_length
+            for i in range(0, len(input_ids) - max_length + 1, max_length // 2):
+                sequence = input_ids[i:i + max_length]
+                if len(sequence) == max_length:
+                    self.examples.append(sequence)
     
     def __len__(self):
-        return len(self.encodings['input_ids'])
+        return len(self.examples)
+    
+    def __getitem__(self, idx):
+        input_ids = self.examples[idx][:-1]  # All tokens except last
+        labels = self.examples[idx][1:]      # All tokens except first
+        
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long)
+        }
 
 def train(
-    model,
-    train_dataloader,
-    optimizer,
-    device,
-    num_epochs,
-    save_dir="checkpoints",
-    save_steps=100,
-    logging_steps=10
+    config: MsingiConfig,
+    train_texts: List[str],
+    val_texts: Optional[List[str]] = None,
+    num_epochs: int = 10,
+    batch_size: int = 8,
+    gradient_accumulation_steps: int = 8,
+    learning_rate: float = 3e-4,
+    max_length: int = 1024,
+    warmup_steps: int = 1000,
+    save_steps: int = 1000,
+    eval_steps: int = 500,
+    save_dir: str = "checkpoints",
+    tokenizer_path: str = "tokenizer/tokenizer.json",
+    use_wandb: bool = True,
 ):
-    model.train()
-    wandb.init(project="msingi1")
+    """Train the Msingi1 model."""
     
-    global_step = 0
-    best_loss = float('inf')
+    # Initialize wandb
+    if use_wandb:
+        wandb.init(
+            project="msingi1",
+            config={
+                "architecture": "Msingi1",
+                "dataset": "Swahili",
+                "epochs": num_epochs,
+                "batch_size": batch_size,
+                "gradient_accumulation_steps": gradient_accumulation_steps,
+                "learning_rate": learning_rate,
+                "max_length": max_length,
+                "warmup_steps": warmup_steps,
+            }
+        )
     
     # Create save directory
-    save_dir = Path(save_dir)
-    save_dir.mkdir(exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
     
-    print(f"\nTraining on device: {device}")
-    print(f"Number of epochs: {num_epochs}")
-    print(f"Number of training batches: {len(train_dataloader)}")
-    print(f"Save steps: {save_steps}")
-    print(f"Logging steps: {logging_steps}\n")
+    # Initialize model
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = Msingi1(config).to(device)
+    
+    # Enable gradient checkpointing if available
+    if hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
+    
+    # Create datasets
+    train_dataset = SwahiliDataset(train_texts, tokenizer_path, max_length)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    
+    if val_texts:
+        val_dataset = SwahiliDataset(val_texts, tokenizer_path, max_length)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    
+    # Initialize optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    
+    # Learning rate scheduler with warmup
+    num_training_steps = len(train_loader) * num_epochs
+    lr_scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=warmup_steps,
+        num_training_steps=num_training_steps
+    )
+    
+    # Training loop
+    global_step = 0
+    best_val_loss = float('inf')
     
     for epoch in range(num_epochs):
+        model.train()
         total_loss = 0
-        progress_bar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{num_epochs}')
+        optimizer.zero_grad()
         
-        for batch in progress_bar:
-            # Move batch to device
-            input_ids = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+        
+        for step, batch in enumerate(progress_bar):
+            input_ids = batch["input_ids"].to(device)
+            labels = batch["labels"].to(device)
             
             # Forward pass
-            optimizer.zero_grad()
-            outputs = model(input_ids, attention_mask=attention_mask)
+            outputs = model(input_ids)
+            logits = outputs
             
-            # Compute loss
+            # Calculate loss
             loss = torch.nn.functional.cross_entropy(
-                outputs.view(-1, outputs.size(-1)),
+                logits.view(-1, config.vocab_size),
                 labels.view(-1),
                 ignore_index=-100
             )
             
-            # Backward pass
+            # Scale loss by gradient accumulation steps
+            loss = loss / gradient_accumulation_steps
             loss.backward()
-            optimizer.step()
             
-            # Update metrics
-            total_loss += loss.item()
-            global_step += 1
+            if (step + 1) % gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                lr_scheduler.step()
+                optimizer.zero_grad()
+            
+            total_loss += loss.item() * gradient_accumulation_steps
             
             # Update progress bar
             progress_bar.set_postfix({
-                'loss': f'{loss.item():.4f}',
-                'avg_loss': f'{total_loss/global_step:.4f}',
-                'step': global_step
+                "loss": f"{total_loss/(step+1):.4f}",
+                "lr": f"{lr_scheduler.get_last_lr()[0]:.2e}",
             })
             
-            # Log to wandb
-            if global_step % logging_steps == 0:
-                wandb.log({
-                    'loss': loss.item(),
-                    'epoch': epoch,
-                    'step': global_step
-                })
+            global_step += 1
+            
+            # Evaluation
+            if val_texts and global_step % eval_steps == 0:
+                val_loss = evaluate(model, val_loader, config, device)
+                
+                if use_wandb:
+                    wandb.log({
+                        "train_loss": total_loss / (step + 1),
+                        "val_loss": val_loss,
+                        "learning_rate": lr_scheduler.get_last_lr()[0],
+                    }, step=global_step)
+                
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    model_path = os.path.join(save_dir, "best_model.pt")
+                    torch.save(model.state_dict(), model_path)
             
             # Save checkpoint
             if global_step % save_steps == 0:
-                avg_loss = total_loss / global_step
-                if avg_loss < best_loss:
-                    best_loss = avg_loss
-                    checkpoint_path = save_dir / f'best_model_step_{global_step}.pt'
-                    torch.save({
-                        'epoch': epoch,
-                        'global_step': global_step,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'loss': best_loss,
-                    }, checkpoint_path)
-                    print(f"\nSaved best model checkpoint to {checkpoint_path}")
-        
-        # Save epoch checkpoint
-        checkpoint_path = save_dir / f'checkpoint_epoch_{epoch+1}.pt'
-        torch.save({
-            'epoch': epoch,
-            'global_step': global_step,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': total_loss / len(train_dataloader),
-        }, checkpoint_path)
-        
-        print(f"\nEpoch {epoch+1} average loss: {total_loss/len(train_dataloader):.4f}")
+                model_path = os.path.join(save_dir, f"checkpoint-{global_step}.pt")
+                torch.save({
+                    "step": global_step,
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": lr_scheduler.state_dict(),
+                    "loss": total_loss / (step + 1),
+                }, model_path)
+    
+    # Save final model
+    model_path = os.path.join(save_dir, "final_model.pt")
+    torch.save(model.state_dict(), model_path)
+    
+    if use_wandb:
+        wandb.finish()
 
-def main():
-    # Check for CUDA
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+def evaluate(model, val_loader, config, device):
+    """Evaluate the model on validation data."""
+    model.eval()
+    total_loss = 0
     
-    # Load dataset
-    print("Loading dataset...")
-    texts = extract_dataset("archive.zip")
+    with torch.no_grad():
+        for batch in val_loader:
+            input_ids = batch["input_ids"].to(device)
+            labels = batch["labels"].to(device)
+            
+            outputs = model(input_ids)
+            logits = outputs
+            
+            loss = torch.nn.functional.cross_entropy(
+                logits.view(-1, config.vocab_size),
+                labels.view(-1),
+                ignore_index=-100
+            )
+            
+            total_loss += loss.item()
     
-    # Load tokenizer
-    print("\nLoading tokenizer...")
-    tokenizer = PreTrainedTokenizerFast.from_pretrained('tokenizer')
+    return total_loss / len(val_loader)
+
+def get_cosine_schedule_with_warmup(
+    optimizer,
+    num_warmup_steps: int,
+    num_training_steps: int,
+    num_cycles: float = 0.5,
+    last_epoch: int = -1,
+):
+    """
+    Create a schedule with a learning rate that decreases following the values of the cosine function between the
+    initial lr set in the optimizer to 0, after a warmup period during which it increases linearly between 0 and the
+    initial lr set in the optimizer.
+    """
     
-    # Initialize config and model
-    print("\nInitializing model...")
-    config = MsingiConfig(
-        vocab_size=tokenizer.vocab_size,
-        max_position_embeddings=512,  # Smaller context window for Colab
-        hidden_size=256,  # Smaller model for Colab
-        num_hidden_layers=6,
-        num_attention_heads=8,
-        intermediate_size=1024,
-    )
+    def lr_lambda(current_step):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
     
-    model = Msingi1(config)
-    model.to(device)
-    
-    # Create dataset and dataloader
-    print("\nPreparing dataset...")
-    dataset = SwahiliDataset(texts, tokenizer, max_length=512)
-    train_dataloader = DataLoader(
-        dataset,
-        batch_size=4,  # Small batch size for Colab
-        shuffle=True,
-        num_workers=2 if torch.cuda.is_available() else 0
-    )
-    
-    # Initialize optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5)
-    
-    # Train
-    print("\nStarting training...")
-    train(
-        model,
-        train_dataloader,
-        optimizer,
-        device,
-        num_epochs=10,
-        save_steps=100,
-        logging_steps=10
-    )
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
 
 if __name__ == "__main__":
-    main()
+    # Load dataset
+    texts = extract_dataset("archive.zip")
+    
+    # Split into train/val
+    val_size = int(len(texts) * 0.1)
+    train_texts = texts[val_size:]
+    val_texts = texts[:val_size]
+    
+    # Initialize config
+    config = MsingiConfig()
+    
+    # Train the model
+    train(
+        config=config,
+        train_texts=train_texts,
+        val_texts=val_texts,
+        num_epochs=10,
+        batch_size=4,  # Small batch size for Colab
+        gradient_accumulation_steps=16,  # Accumulate gradients to simulate larger batch
+        learning_rate=3e-4,
+        max_length=1024,
+        warmup_steps=1000,
+        save_steps=1000,
+        eval_steps=500,
+        use_wandb=True  # Set to False if you don't want to use wandb
+    )
