@@ -3,6 +3,10 @@ import sys
 from pathlib import Path
 from tokenizers import ByteLevelBPETokenizer, Tokenizer
 
+# Set console to UTF-8 mode
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 # Add the project root to Python path
 project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
@@ -54,8 +58,6 @@ def train_tokenizer(
     # Save the tokenizer files
     tokenizer.save(f"{save_dir}/vocab.json")
     tokenizer.save(f"{save_dir}/merges.txt")
-    
-    # Save the complete tokenizer.json for easy loading
     tokenizer.save(f"{save_dir}/tokenizer.json")
     
     print(f"Tokenizer saved to {save_dir}")
@@ -66,7 +68,7 @@ def train_tokenizer(
     
     print("\nTokenizer test:")
     print(f"Original text: {test_text}")
-    print(f"Encoded tokens: {encoded.tokens}")
+    print(f"Encoded tokens: {' '.join(encoded.tokens)}")
     print(f"Decoded: {tokenizer.decode(encoded.ids)}")
     
     return tokenizer

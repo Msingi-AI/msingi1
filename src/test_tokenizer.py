@@ -1,5 +1,10 @@
+import sys
 from tokenizers import Tokenizer
 from pathlib import Path
+
+# Set console to UTF-8 mode
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 def test_tokenizer(text: str):
     """Test the trained tokenizer with sample Swahili text."""
@@ -18,7 +23,7 @@ def test_tokenizer(text: str):
     print("-" * 50)
     print(f"Original text: {text}")
     print("-" * 50)
-    print("Tokens:", encoded.tokens)
+    print("Tokens:", " ".join(encoded.tokens))  # Join tokens with spaces for better display
     print("-" * 50)
     print("Token IDs:", encoded.ids)
     print("-" * 50)
