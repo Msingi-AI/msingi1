@@ -1,21 +1,39 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import math
+from typing import Optional
+
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end, device=freqs.device)
+    freqs = torch.outer(t, freqs).float()
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
+    return freqs_cis
+
+def apply_rotary_emb(xq, xk, freqs_cis):
+    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
+    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+    freqs_cis = freqs_cis[:xq_.shape[1], :]
+    xq_out = torch.view_as_real(xq_ * freqs_cis.unsqueeze(0)).flatten(3)
+    xk_out = torch.view_as_real(xk_ * freqs_cis.unsqueeze(0)).flatten(3)
+    return xq_out.type_as(xq), xk_out.type_as(xk)
 
 class MsingiConfig:
     def __init__(
         self,
         vocab_size=50000,
-        max_position_embeddings=1024,
-        hidden_size=256,
-        num_hidden_layers=6,
-        num_attention_heads=8,
-        intermediate_size=1024,
+        max_position_embeddings=2048,  # Increased for longer context
+        hidden_size=768,  # Increased for better capacity
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
         hidden_dropout_prob=0.1,
         attention_probs_dropout_prob=0.1,
-        num_experts=4,  # Number of expert networks
-        expert_capacity=2,  # How many tokens each expert can process
-        moe_layer_frequency=2,  # Add MoE every N layers
+        layer_norm_epsilon=1e-5,
+        initializer_range=0.02,
+        use_cache=True,
+        gradient_checkpointing=False,
     ):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
@@ -25,132 +43,74 @@ class MsingiConfig:
         self.intermediate_size = intermediate_size
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
-        self.num_experts = num_experts
-        self.expert_capacity = expert_capacity
-        self.moe_layer_frequency = moe_layer_frequency
-
-class Expert(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.fc1 = nn.Linear(config.hidden_size, config.intermediate_size)
-        self.fc2 = nn.Linear(config.intermediate_size, config.hidden_size)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
-    def forward(self, x):
-        x = F.gelu(self.fc1(x))
-        x = self.fc2(x)
-        return self.dropout(x)
-
-class MoELayer(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-        self.num_experts = config.num_experts
-        self.expert_capacity = config.expert_capacity
-        self.hidden_size = config.hidden_size
-        
-        # Create experts
-        self.experts = nn.ModuleList([Expert(config) for _ in range(config.num_experts)])
-        
-        # Router network (gates)
-        self.router = nn.Linear(config.hidden_size, config.num_experts)
-        
-    def forward(self, hidden_states):
-        batch_size, sequence_length, hidden_size = hidden_states.shape
-        hidden_states = hidden_states.view(-1, hidden_size)  # Combine batch and sequence
-        
-        # Get router scores and probabilities
-        router_logits = self.router(hidden_states)
-        router_probs = F.softmax(router_logits, dim=-1)
-        
-        # Select top-k experts for each token
-        top_k_probs, top_k_indices = torch.topk(router_probs, k=2, dim=-1)
-        top_k_probs = top_k_probs / top_k_probs.sum(dim=-1, keepdim=True)  # Normalize probabilities
-        
-        # Initialize output tensor
-        final_output = torch.zeros_like(hidden_states)
-        
-        # Dispatch to experts
-        for expert_idx, expert in enumerate(self.experts):
-            # Find which tokens go to this expert
-            expert_mask = top_k_indices[:, 0] == expert_idx
-            if expert_mask.any():
-                # Process tokens with this expert
-                expert_input = hidden_states[expert_mask]
-                expert_output = expert(expert_input)
-                final_output[expert_mask] = expert_output * top_k_probs[expert_mask, 0].unsqueeze(-1)
-        
-        # Reshape back to original dimensions
-        final_output = final_output.view(batch_size, sequence_length, hidden_size)
-        return final_output
+        self.layer_norm_epsilon = layer_norm_epsilon
+        self.initializer_range = initializer_range
+        self.use_cache = use_cache
+        self.gradient_checkpointing = gradient_checkpointing
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.num_attention_heads = config.num_attention_heads
         self.hidden_size = config.hidden_size
-        self.attention_head_size = config.hidden_size // config.num_attention_heads
+        self.head_dim = config.hidden_size // config.num_attention_heads
+        self.scaling = self.head_dim ** -0.5
         
-        self.query = nn.Linear(config.hidden_size, config.hidden_size)
-        self.key = nn.Linear(config.hidden_size, config.hidden_size)
-        self.value = nn.Linear(config.hidden_size, config.hidden_size)
+        self.q_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.k_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.v_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.out_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         
-    def transpose_for_scores(self, x):
-        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
-        x = x.view(*new_x_shape)
-        return x.permute(0, 2, 1, 3)
-    
-    def forward(self, hidden_states, attention_mask=None):
-        query_layer = self.transpose_for_scores(self.query(hidden_states))
-        key_layer = self.transpose_for_scores(self.key(hidden_states))
-        value_layer = self.transpose_for_scores(self.value(hidden_states))
+    def forward(self, hidden_states, freqs_cis, attention_mask=None):
+        batch_size, seq_length = hidden_states.shape[:2]
         
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        attention_scores = attention_scores / torch.sqrt(torch.tensor(self.attention_head_size, dtype=torch.float))
+        q = self.q_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
+        k = self.k_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
+        v = self.v_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
+        
+        # Apply rotary embeddings
+        q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
+        
+        # Efficient attention computation
+        q = q.transpose(1, 2)  # (batch, n_heads, seq_len, head_dim)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        
+        # Flash attention-like computation (simplified version)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
         
         if attention_mask is not None:
-            attention_scores = attention_scores + attention_mask
+            scores = scores + attention_mask
             
-        attention_probs = F.softmax(attention_scores, dim=-1)
-        attention_probs = self.dropout(attention_probs)
+        attention_weights = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(q)
+        attention_weights = self.dropout(attention_weights)
         
-        context_layer = torch.matmul(attention_probs, value_layer)
-        context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.hidden_size,)
-        context_layer = context_layer.view(*new_context_layer_shape)
+        output = torch.matmul(attention_weights, v)
+        output = output.transpose(1, 2).contiguous().view(batch_size, seq_length, self.hidden_size)
         
-        return context_layer
+        return self.out_proj(output)
 
 class MsingiBlock(nn.Module):
-    def __init__(self, config, use_moe=False):
+    def __init__(self, config):
         super().__init__()
         self.attention = MultiHeadAttention(config)
-        self.use_moe = use_moe
+        self.mlp = nn.Sequential(
+            nn.Linear(config.hidden_size, config.intermediate_size),
+            nn.GELU(approximate='tanh'),
+            nn.Linear(config.intermediate_size, config.hidden_size),
+            nn.Dropout(config.hidden_dropout_prob),
+        )
+        self.ln1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.ln2 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
         
-        if use_moe:
-            self.feed_forward = MoELayer(config)
-        else:
-            self.intermediate = nn.Linear(config.hidden_size, config.intermediate_size)
-            self.output = nn.Linear(config.intermediate_size, config.hidden_size)
-            
-        self.layernorm1 = nn.LayerNorm(config.hidden_size)
-        self.layernorm2 = nn.LayerNorm(config.hidden_size)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
-    def forward(self, hidden_states, attention_mask=None):
-        attention_output = self.attention(hidden_states, attention_mask)
-        hidden_states = self.layernorm1(hidden_states + attention_output)
-        
-        if self.use_moe:
-            layer_output = self.feed_forward(hidden_states)
-        else:
-            intermediate_output = F.gelu(self.intermediate(hidden_states))
-            layer_output = self.output(intermediate_output)
-            
-        layer_output = self.dropout(layer_output)
-        layer_output = self.layernorm2(hidden_states + layer_output)
-        
-        return layer_output
+    def forward(self, hidden_states, freqs_cis, attention_mask=None):
+        # Pre-norm architecture
+        attn_output = self.attention(self.ln1(hidden_states), freqs_cis, attention_mask)
+        hidden_states = hidden_states + attn_output
+        hidden_states = hidden_states + self.mlp(self.ln2(hidden_states))
+        return hidden_states
 
 class Msingi1(nn.Module):
     def __init__(self, config):
@@ -158,48 +118,95 @@ class Msingi1(nn.Module):
         self.config = config
         
         self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.layers = nn.ModuleList([MsingiBlock(config) for _ in range(config.num_hidden_layers)])
+        self.ln_f = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
         
-        # Create layers with MoE at specified frequency
-        self.layers = nn.ModuleList([
-            MsingiBlock(config, use_moe=(i % config.moe_layer_frequency == 0))
-            for i in range(config.num_hidden_layers)
-        ])
+        # Initialize weights
+        self.apply(self._init_weights)
         
-        self.layernorm = nn.LayerNorm(config.hidden_size)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        # Compute rotary position embeddings
+        self.freqs_cis = precompute_freqs_cis(
+            self.config.hidden_size // self.config.num_attention_heads,
+            self.config.max_position_embeddings,
+        )
         
         # Language modeling head
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         
+        # Tie weights if needed
+        self.lm_head.weight = self.embeddings.weight
+        
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+            
     def forward(self, input_ids, attention_mask=None):
-        position_ids = torch.arange(0, input_ids.size(1), dtype=torch.long, device=input_ids.device)
-        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        batch_size, seq_length = input_ids.shape
         
-        inputs_embeds = self.embeddings(input_ids)
-        position_embeddings = self.position_embeddings(position_ids)
+        hidden_states = self.embeddings(input_ids)
         
-        hidden_states = inputs_embeds + position_embeddings
-        hidden_states = self.dropout(hidden_states)
+        freqs_cis = self.freqs_cis.to(hidden_states.device)
         
         if attention_mask is not None:
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-            attention_mask = (1.0 - attention_mask) * -10000.0
+            attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -10000.0
             
         for layer in self.layers:
-            hidden_states = layer(hidden_states, attention_mask)
+            if self.config.gradient_checkpointing and self.training:
+                hidden_states = torch.utils.checkpoint.checkpoint(
+                    layer, hidden_states, freqs_cis, attention_mask
+                )
+            else:
+                hidden_states = layer(hidden_states, freqs_cis, attention_mask)
             
-        hidden_states = self.layernorm(hidden_states)
+        hidden_states = self.ln_f(hidden_states)
         lm_logits = self.lm_head(hidden_states)
         
         return lm_logits
     
-    def generate(self, input_ids, max_length, temperature=1.0):
+    @torch.no_grad()
+    def generate(
+        self,
+        input_ids: torch.LongTensor,
+        max_length: int,
+        temperature: float = 1.0,
+        top_k: Optional[int] = None,
+        top_p: Optional[float] = None,
+    ):
+        """
+        Generate text using various sampling strategies
+        """
         self.eval()
-        with torch.no_grad():
-            for _ in range(max_length - input_ids.size(1)):
-                outputs = self(input_ids)
-                next_token_logits = outputs[:, -1, :] / temperature
-                next_token = torch.multinomial(F.softmax(next_token_logits, dim=-1), num_samples=1)
-                input_ids = torch.cat([input_ids, next_token], dim=1)
+        batch_size = input_ids.shape[0]
+        
+        for _ in range(max_length - input_ids.size(1)):
+            if input_ids.size(1) > self.config.max_position_embeddings:
+                input_ids = input_ids[:, -self.config.max_position_embeddings:]
+                
+            outputs = self(input_ids)
+            next_token_logits = outputs[:, -1, :] / temperature
+            
+            if top_k is not None:
+                indices_to_remove = next_token_logits < torch.topk(next_token_logits, top_k)[0][..., -1, None]
+                next_token_logits[indices_to_remove] = float('-inf')
+                
+            if top_p is not None:
+                sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                next_token_logits[indices_to_remove] = float('-inf')
+            
+            probs = F.softmax(next_token_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            input_ids = torch.cat([input_ids, next_token], dim=1)
+            
         return input_ids
