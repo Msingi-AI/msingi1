@@ -1,7 +1,7 @@
 import os
 import sys
 from pathlib import Path
-from tokenizers import ByteLevelBPETokenizer
+from tokenizers import ByteLevelBPETokenizer, Tokenizer
 
 # Add the project root to Python path
 project_root = str(Path(__file__).parent.parent)
@@ -38,7 +38,7 @@ def train_tokenizer(
     print(f"\nTraining tokenizer with vocab size {vocab_size}...")
     
     # Initialize tokenizer
-    tokenizer = ByteLevelBPETokenizer()
+    tokenizer = ByteLevelBPETokenizer(lowercase=True)
     
     # Train tokenizer
     tokenizer.train_from_iterator(
@@ -51,17 +51,22 @@ def train_tokenizer(
     # Create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
     
-    # Save the tokenizer
-    tokenizer.save_model(save_dir)
+    # Save the tokenizer files
+    tokenizer.save(f"{save_dir}/vocab.json")
+    tokenizer.save(f"{save_dir}/merges.txt")
+    
+    # Save the complete tokenizer.json for easy loading
+    tokenizer.save(f"{save_dir}/tokenizer.json")
+    
     print(f"Tokenizer saved to {save_dir}")
     
     # Test the tokenizer
-    test_text = texts[0][:100]  # Take first 100 chars of first text
+    test_text = "Jambo! Habari yako? Leo ni siku nzuri."
     encoded = tokenizer.encode(test_text)
     
     print("\nTokenizer test:")
     print(f"Original text: {test_text}")
-    print(f"Encoded: {encoded.tokens}")
+    print(f"Encoded tokens: {encoded.tokens}")
     print(f"Decoded: {tokenizer.decode(encoded.ids)}")
     
     return tokenizer
