@@ -14,6 +14,7 @@ from tokenizers import Tokenizer
 from torch.cuda.amp import autocast
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
+import torch.nn.functional as F
 
 @dataclass
 class TrainingConfig:
@@ -29,6 +30,10 @@ class TrainingConfig:
     checkpoint_dir: str = 'checkpoints'
     fp16: bool = True  # Enable mixed precision
     sequence_length: int = 1024
+    gradient_accumulation_steps: int = 1
+    weight_decay: float = 0.0
+    eval_every: int = 100
+    save_every: int = 500
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
@@ -59,6 +64,36 @@ class SwahiliDataset(Dataset):
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
             "labels": torch.tensor(labels, dtype=torch.long)
         }
+
+def compute_loss_with_penalty(logits, labels, alpha=0.1):
+    """Compute cross entropy loss with a repetition penalty."""
+    # Standard cross entropy loss
+    ce_loss = F.cross_entropy(
+        logits.view(-1, logits.size(-1)),
+        labels.view(-1),
+        ignore_index=-100
+    )
+    
+    # Compute repetition penalty
+    batch_size, seq_len = labels.shape
+    rep_penalty = 0
+    
+    # For each sequence in the batch
+    for i in range(batch_size):
+        # Get non-padded tokens
+        seq = labels[i][labels[i] != -100]
+        if len(seq) > 1:
+            # Count repeated tokens in windows of 3
+            for j in range(len(seq)-2):
+                window = seq[j:j+3]
+                unique_tokens = torch.unique(window)
+                rep_penalty += 1 - (len(unique_tokens) / len(window))
+    
+    rep_penalty = rep_penalty / (batch_size * seq_len)
+    
+    # Combine losses
+    total_loss = ce_loss + alpha * rep_penalty
+    return total_loss
 
 def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
          training_config: Optional[TrainingConfig] = None):
@@ -104,7 +139,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     model = model.to(device)
     
     # Initialize optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=training_config.learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=training_config.learning_rate, weight_decay=training_config.weight_decay)
     
     # Load checkpoint if exists
     start_epoch = 0
@@ -154,13 +189,11 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             # Forward pass with mixed precision
             with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
                 outputs = model(input_ids)
-                logits = outputs
-                loss = torch.nn.functional.cross_entropy(
-                    logits.view(-1, model_config.vocab_size),
-                    labels.view(-1),
-                    ignore_index=-100
-                )
-                loss = loss / training_config.grad_acc_steps
+                logits = outputs.logits
+                
+                # Compute loss with repetition penalty
+                loss = compute_loss_with_penalty(logits, labels)
+                loss = loss / training_config.gradient_accumulation_steps
             
             # Backward pass with mixed precision
             if training_config.fp16 and torch.cuda.is_available():
@@ -168,7 +201,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             else:
                 loss.backward()
             
-            if (step + 1) % training_config.grad_acc_steps == 0:
+            if (step + 1) % training_config.gradient_accumulation_steps == 0:
                 if training_config.fp16 and torch.cuda.is_available():
                     scaler.unscale_(optimizer)
                     clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
@@ -182,7 +215,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 optimizer.zero_grad()
                 
                 # Save checkpoint
-                if (step + 1) % training_config.save_steps == 0:
+                if (step + 1) % training_config.save_every == 0:
                     checkpoint = {
                         'epoch': epoch,
                         'model_state_dict': model.state_dict(),
@@ -207,7 +240,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                                 print(f'Early stopping triggered after {epoch + 1} epochs')
                                 break
             
-            total_loss += loss.item() * training_config.grad_acc_steps
+            total_loss += loss.item() * training_config.gradient_accumulation_steps
             
             # Update progress bar
             progress_bar.set_postfix({
@@ -218,7 +251,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             global_step += 1
             
             # Evaluation
-            if val_texts and global_step % 500 == 0:
+            if val_texts and global_step % training_config.eval_every == 0:
                 val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
                 
                 if use_wandb:
@@ -303,14 +336,66 @@ def get_cosine_schedule_with_warmup(
     
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
 
+def clean_text(text: str) -> str:
+    """Clean and preprocess text data."""
+    import re
+    
+    # Remove URLs
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+    
+    # Remove email addresses
+    text = re.sub(r'\S+@\S+', '', text)
+    
+    # Remove numbers mixed with text (keep pure numbers)
+    text = re.sub(r'\w*\d+\w*', '', text)
+    
+    # Remove multiple spaces
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Remove mixed language (likely English) words - words with non-Swahili characters
+    text = re.sub(r'\b\w*[qxcv]\w*\b', '', text, flags=re.IGNORECASE)  # Swahili doesn't use q,x,c,v
+    
+    # Normalize quotes and dashes
+    text = re.sub(r'[''"""]', '"', text)
+    text = re.sub(r'[–—−]', '-', text)
+    
+    # Remove standalone numbers and special characters
+    text = re.sub(r'(?<!\w)\d+(?!\w)', '', text)
+    text = re.sub(r'[^\w\s\.\,\;\:\"\'\-\?\/\!]', '', text)
+    
+    # Remove repeated punctuation
+    text = re.sub(r'([.,!?])\1+', r'\1', text)
+    
+    # Remove extra whitespace
+    text = ' '.join(text.split())
+    
+    return text
+
+def prepare_dataset(texts: List[str]) -> List[str]:
+    """Prepare dataset by cleaning and filtering texts."""
+    cleaned_texts = []
+    min_length = 100  # Minimum text length to keep
+    
+    for text in texts:
+        cleaned = clean_text(text)
+        # Only keep substantial texts
+        if len(cleaned.split()) >= min_length:
+            cleaned_texts.append(cleaned)
+    
+    return cleaned_texts
+
 if __name__ == "__main__":
     # Load dataset
     texts = extract_dataset("archive.zip")
     
+    # Clean and prepare texts
+    texts = prepare_dataset(texts)
+    print(f"Cleaned dataset size: {len(texts)} texts")
+    
     # Split into train/val
-    val_size = max(1, len(texts) // 10)  # 10% for validation
-    train_texts = texts[:-val_size]
-    val_texts = texts[-val_size:]
+    train_size = int(0.9 * len(texts))
+    train_texts = texts[:train_size]
+    val_texts = texts[train_size:]
     
     print(f'Train samples: {len(train_texts)}')
     print(f'Validation samples: {len(val_texts)}')
@@ -328,15 +413,19 @@ if __name__ == "__main__":
     
     # Initialize training config
     training_config = TrainingConfig(
-        num_epochs=25,
         batch_size=8,
-        learning_rate=3e-4,
-        warmup_steps=1000,
-        grad_acc_steps=8,
-        save_steps=500,
-        eval_steps=100,
+        gradient_accumulation_steps=8,  # Effective batch size = 64
+        learning_rate=2e-4,  # Slightly lower learning rate
+        num_epochs=40,  # More epochs with early stopping
+        warmup_steps=1000,  # More warmup steps
+        max_grad_norm=0.5,  # Lower grad norm for stability
+        weight_decay=0.01,  # L2 regularization
+        early_stopping_patience=5,  # More patience
+        eval_every=500,  # More frequent evaluation
+        save_every=1000,
         fp16=True,
-        early_stopping_patience=3
+        sequence_length=512,  # Shorter sequences for better memory usage
+        checkpoint_dir='checkpoints'
     )
     
     # Create checkpoint directory
