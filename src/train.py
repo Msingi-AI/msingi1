@@ -65,6 +65,9 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if training_config is None:
         training_config = TrainingConfig()
     
+    # Create checkpoint directory
+    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+    
     # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if torch.cuda.is_available():
@@ -223,14 +226,30 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    model_path = os.path.join(checkpoint_dir, "best_model.pt")
-                    torch.save(model.state_dict(), model_path)
+                    model_path = os.path.join(training_config.checkpoint_dir, "best_model.pt")
+                    torch.save({
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': lr_scheduler.state_dict(),
+                        'scaler_state_dict': scaler.state_dict() if scaler else None,
+                        'loss': val_loss,
+                        'best_val_loss': best_val_loss
+                    }, model_path)
             
             lr_scheduler.step()
     
     # Save final model
-    model_path = os.path.join(checkpoint_dir, "final_model.pt")
-    torch.save(model.state_dict(), model_path)
+    model_path = os.path.join(training_config.checkpoint_dir, "final_model.pt")
+    torch.save({
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': lr_scheduler.state_dict(),
+        'scaler_state_dict': scaler.state_dict() if scaler else None,
+        'loss': loss.item(),
+        'best_val_loss': best_val_loss
+    }, model_path)
     
     if use_wandb:
         wandb.finish()
