@@ -42,16 +42,32 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             'text_selector': '.article-summary, .article-content, p'
         },
         {
-            'url': 'https://habari.co.tz',
-            'article_selector': '.jeg_post, article',
-            'text_selector': '.jeg_post_excerpt, .entry-content, p'
+            'url': 'https://www.mwananchi.co.tz/mw/habari',
+            'article_selector': 'article, .article-item',
+            'text_selector': '.article-summary, .article-content, p'
         },
         {
-            'url': 'https://www.jamiiforums.com',
-            'article_selector': '.structItem, .message',
-            'text_selector': '.structItem-title, .message-body'
+            'url': 'https://www.mwananchi.co.tz/mw/michezo',
+            'article_selector': 'article, .article-item',
+            'text_selector': '.article-summary, .article-content, p'
         },
-        # Wikipedia Swahili
+        {
+            'url': 'https://www.bbc.com/swahili',
+            'article_selector': '.bbc-1fxtbkn, .story-body',
+            'text_selector': '.bbc-1y32n3c, .story-body__inner p'
+        },
+        # Kenya Swahili news
+        {
+            'url': 'https://www.standardmedia.co.ke/category/595/kiswahili',
+            'article_selector': '.article-card, .article',
+            'text_selector': '.article-summary, .article-content'
+        },
+        {
+            'url': 'https://www.nation.co.ke/swahili',
+            'article_selector': '.article-box, .story',
+            'text_selector': '.summary, .article-body'
+        },
+        # Wikipedia Swahili articles
         {
             'url': 'https://sw.wikipedia.org/wiki/Tanzania',
             'article_selector': '.mw-parser-output',
@@ -63,9 +79,27 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             'text_selector': 'p'
         },
         {
-            'url': 'https://sw.wikipedia.org/wiki/Uganda',
+            'url': 'https://sw.wikipedia.org/wiki/Afrika_Mashariki',
             'article_selector': '.mw-parser-output',
             'text_selector': 'p'
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Kiswahili',
+            'article_selector': '.mw-parser-output',
+            'text_selector': 'p'
+        },
+        # Additional Wikipedia categories
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Historia',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,  # Will follow links
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Siasa',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
         }
     ]
     
@@ -77,6 +111,31 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache'
     }
+
+    def extract_text_from_url(url: str) -> List[str]:
+        """Helper function to extract text from a URL."""
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Get all paragraphs
+            paragraphs = soup.find_all('p', recursive=True)
+            texts = []
+            
+            for p in paragraphs:
+                # Remove references and other unwanted elements
+                [s.extract() for s in p.select('.reference, .mw-editsection')]
+                text = p.get_text().strip()
+                if text:
+                    text = clean_text(text)
+                    if len(text.split()) >= 20:  # Only keep substantial paragraphs
+                        texts.append(text)
+            
+            return texts
+        except Exception as e:
+            print(f"Error extracting text from {url}: {str(e)}")
+            return []
     
     for source in sources:
         source_texts = []  # Keep track of texts from this source
@@ -87,44 +146,53 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Try different selectors
-            selectors = source['article_selector'].split(', ')
-            articles = []
-            for selector in selectors:
-                articles.extend(soup.select(selector))
+            # Handle category pages differently
+            if source.get('is_category', False):
+                # Get all article links from category
+                links = soup.select(source['article_selector'])
+                print(f"Found {len(links)} articles in category")
                 
-            print(f"Found {len(articles)} potential articles")
-            
-            for article in articles[:max_articles // len(sources)]:
-                # Try different text selectors
-                text_selectors = source['text_selector'].split(', ')
-                paragraphs = []
-                for selector in text_selectors:
-                    paragraphs.extend(article.select(selector))
-                
-                if not paragraphs and 'wiki' in source['url']:
-                    # Special handling for Wikipedia: get all paragraphs
-                    paragraphs = article.find_all('p', recursive=True)
-                
-                texts = []
-                for p in paragraphs:
-                    # Remove references and other unwanted elements
-                    [s.extract() for s in p.select('.reference, .mw-editsection')]
-                    text = p.get_text().strip()
-                    if text:
-                        texts.append(text)
-                
-                if texts:
-                    text = ' '.join(texts)
-                    text = clean_text(text)
+                # Visit each article
+                for link in links[:max_articles // len(sources)]:
+                    article_url = 'https://sw.wikipedia.org' + link['href']
+                    print(f"Visiting article: {article_url}")
+                    article_texts = extract_text_from_url(article_url)
+                    source_texts.extend(article_texts)
                     
-                    # Additional text cleaning
-                    text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with single space
-                    text = re.sub(r'[^\w\s\.,!?-]', '', text)  # Remove special characters except basic punctuation
-                    text = re.sub(r'\.{2,}', '.', text)  # Replace multiple dots with single dot
+            else:
+                # Try different selectors
+                selectors = source['article_selector'].split(', ')
+                articles = []
+                for selector in selectors:
+                    articles.extend(soup.select(selector))
                     
-                    if len(text.split()) >= 20:  # Only keep substantial paragraphs
-                        source_texts.append(text)
+                print(f"Found {len(articles)} potential articles")
+                
+                for article in articles[:max_articles // len(sources)]:
+                    # Try different text selectors
+                    text_selectors = source['text_selector'].split(', ')
+                    paragraphs = []
+                    for selector in text_selectors:
+                        paragraphs.extend(article.select(selector))
+                    
+                    if not paragraphs and 'wiki' in source['url']:
+                        # Special handling for Wikipedia: get all paragraphs
+                        paragraphs = article.find_all('p', recursive=True)
+                    
+                    texts = []
+                    for p in paragraphs:
+                        # Remove references and other unwanted elements
+                        [s.extract() for s in p.select('.reference, .mw-editsection')]
+                        text = p.get_text().strip()
+                        if text:
+                            texts.append(text)
+                    
+                    if texts:
+                        text = ' '.join(texts)
+                        text = clean_text(text)
+                        
+                        if len(text.split()) >= 20:  # Only keep substantial paragraphs
+                            source_texts.append(text)
             
             # Add source texts to all texts
             all_texts.extend(source_texts)
