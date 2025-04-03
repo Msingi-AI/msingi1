@@ -11,6 +11,24 @@ import math
 from typing import Optional, List
 import numpy as np
 from tokenizers import Tokenizer
+from torch.cuda.amp import autocast, GradScaler
+from torch.nn.utils.clip_grad import clip_grad_norm_
+from dataclasses import dataclass
+
+@dataclass
+class TrainingConfig:
+    num_epochs: int = 25
+    batch_size: int = 8  # Increased for T4
+    learning_rate: float = 3e-4
+    warmup_steps: int = 1000
+    grad_acc_steps: int = 8  # Reduced since we increased batch size
+    save_steps: int = 500
+    eval_steps: int = 100
+    max_grad_norm: float = 1.0
+    early_stopping_patience: int = 3
+    checkpoint_dir: str = 'checkpoints'
+    fp16: bool = True  # Enable mixed precision
+    sequence_length: int = 1024
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
@@ -42,28 +60,36 @@ class SwahiliDataset(Dataset):
             "labels": torch.tensor(labels, dtype=torch.long)
         }
 
-def train(config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
-         num_epochs: int = 100,
-         batch_size: int = 4,
-         learning_rate: float = 3e-4,
-         warmup_steps: int = 1000,
-         grad_acc_steps: int = 16,
-         save_steps: int = 1000,
-         checkpoint_dir: str = 'checkpoints',
-         device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):
+def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
+         training_config: Optional[TrainingConfig] = None):
+    if training_config is None:
+        training_config = TrainingConfig()
+    
+    # Setup device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        print(f'Using GPU: {torch.cuda.get_device_name(0)}')
+        print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
+    
+    # Initialize mixed precision training
+    scaler = GradScaler() if training_config.fp16 and torch.cuda.is_available() else None
     # Initialize wandb
     use_wandb = True
     if use_wandb:
         wandb.init(
             project="msingi1",
             config={
-                "architecture": "Msingi1",
-                "dataset": "Swahili",
-                "epochs": num_epochs,
-                "batch_size": batch_size,
-                "gradient_accumulation_steps": grad_acc_steps,
-                "learning_rate": learning_rate,
-                "warmup_steps": warmup_steps,
+                "architecture": {
+                    "hidden_size": model_config.hidden_size,
+                    "num_layers": model_config.num_hidden_layers,
+                    "num_heads": model_config.num_attention_heads,
+                    "vocab_size": model_config.vocab_size
+                },
+                "training": vars(training_config),
+                "dataset": {
+                    "num_samples": len(train_texts),
+                    "sequence_length": training_config.sequence_length
+                }
             }
         )
     
@@ -87,12 +113,12 @@ def train(config: MsingiConfig, train_texts: List[str], val_texts: Optional[List
         print(f'Resuming from epoch {start_epoch}')
     
     # Create datasets
-    train_dataset = SwahiliDataset(train_texts, "tokenizer/tokenizer.json", 1024)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    train_dataset = SwahiliDataset(train_texts, "tokenizer/tokenizer.json", training_config.sequence_length)
+    train_loader = DataLoader(train_dataset, batch_size=training_config.batch_size, shuffle=True)
     
     if val_texts:
-        val_dataset = SwahiliDataset(val_texts, "tokenizer/tokenizer.json", 1024)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size)
+        val_dataset = SwahiliDataset(val_texts, "tokenizer/tokenizer.json", training_config.sequence_length)
+        val_loader = DataLoader(val_dataset, batch_size=training_config.batch_size)
     
     # Learning rate scheduler with warmup
     num_training_steps = len(train_loader) * num_epochs
@@ -105,7 +131,9 @@ def train(config: MsingiConfig, train_texts: List[str], val_texts: Optional[List
     # Training loop
     global_step = 0
     best_val_loss = float('inf')
-    for epoch in range(start_epoch, num_epochs):
+    patience_counter = 0
+    
+    for epoch in range(start_epoch, training_config.num_epochs):
         model.train()
         total_loss = 0
         optimizer.zero_grad()
@@ -116,52 +144,61 @@ def train(config: MsingiConfig, train_texts: List[str], val_texts: Optional[List
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            # Forward pass
-            outputs = model(input_ids)
-            logits = outputs
+            # Forward pass with mixed precision
+            with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
+                outputs = model(input_ids)
+                logits = outputs
+                loss = torch.nn.functional.cross_entropy(
+                    logits.view(-1, model_config.vocab_size),
+                    labels.view(-1),
+                    ignore_index=-100
+                )
+                loss = loss / training_config.grad_acc_steps
             
-            # Calculate loss
-            loss = torch.nn.functional.cross_entropy(
-                logits.view(-1, config.vocab_size),
-                labels.view(-1),
-                ignore_index=-100
-            )
+            # Backward pass with mixed precision
+            if training_config.fp16 and torch.cuda.is_available():
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
             
-            # Scale loss by gradient accumulation steps
-            loss = loss / grad_acc_steps
-            loss.backward()
-            
-            if (step + 1) % grad_acc_steps == 0:
-                # Clip gradients
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                
-                # Step optimizer first
-                if device == 'tpu':
-                    import torch_xla.core.xla_model as xm
-                    xm.optimizer_step(optimizer)
+            if (step + 1) % training_config.grad_acc_steps == 0:
+                if training_config.fp16 and torch.cuda.is_available():
+                    scaler.unscale_(optimizer)
+                    clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
                 else:
+                    clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
                     optimizer.step()
                 
-                # Then step scheduler
                 lr_scheduler.step()
-                
-                # Clear gradients
                 optimizer.zero_grad()
                 
                 # Save checkpoint
-                if (step + 1) % save_steps == 0:
+                if (step + 1) % training_config.save_steps == 0:
                     checkpoint = {
                         'epoch': epoch,
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': lr_scheduler.state_dict(),
+                        'scaler_state_dict': scaler.state_dict() if scaler else None,
                         'loss': loss.item(),
+                        'best_val_loss': best_val_loss
                     }
-                    torch.save(checkpoint, os.path.join(checkpoint_dir, 'latest.pt'))
+                    torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'latest.pt'))
                     
-                    # Save best model
-                    if val_texts and loss.item() < best_val_loss:
-                        best_val_loss = loss.item()
-                        torch.save(checkpoint, os.path.join(checkpoint_dir, 'best.pt'))
+                    # Early stopping check
+                    if val_texts:
+                        val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                        if val_loss < best_val_loss:
+                            best_val_loss = val_loss
+                            patience_counter = 0
+                            torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'best.pt'))
+                        else:
+                            patience_counter += 1
+                            if patience_counter >= training_config.early_stopping_patience:
+                                print(f'Early stopping triggered after {epoch + 1} epochs')
+                                break
             
             total_loss += loss.item() * grad_acc_steps
             
@@ -198,8 +235,8 @@ def train(config: MsingiConfig, train_texts: List[str], val_texts: Optional[List
     if use_wandb:
         wandb.finish()
 
-def evaluate(model, val_loader, config, device):
-    """Evaluate the model on validation data."""
+def evaluate(model, val_loader, config, device, fp16=False):
+    """Evaluate the model on validation data with optional mixed precision."""
     model.eval()
     total_loss = 0
     
@@ -208,14 +245,15 @@ def evaluate(model, val_loader, config, device):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            outputs = model(input_ids)
-            logits = outputs
-            
-            loss = torch.nn.functional.cross_entropy(
-                logits.view(-1, config.vocab_size),
-                labels.view(-1),
-                ignore_index=-100
-            )
+            with autocast(enabled=fp16 and torch.cuda.is_available()):
+                outputs = model(input_ids)
+                logits = outputs
+                
+                loss = torch.nn.functional.cross_entropy(
+                    logits.view(-1, config.vocab_size),
+                    labels.view(-1),
+                    ignore_index=-100
+                )
             
             total_loss += loss.item()
     
@@ -247,35 +285,42 @@ if __name__ == "__main__":
     texts = extract_dataset("archive.zip")
     
     # Split into train/val
-    val_size = int(len(texts) * 0.1)
-    train_texts = texts[val_size:]
-    val_texts = texts[:val_size]
+    val_size = max(1, len(texts) // 10)  # 10% for validation
+    train_texts = texts[:-val_size]
+    val_texts = texts[-val_size:]
     
-    # Initialize config
-    config = MsingiConfig()
+    print(f'Train samples: {len(train_texts)}')
+    print(f'Validation samples: {len(val_texts)}')
     
-    # Detect device and move to GPU if available
-    if torch.cuda.is_available():
-        device = torch.device('cuda')
-        print(f'Using GPU: {torch.cuda.get_device_name(0)}')
-    elif os.environ.get('COLAB_TPU_ADDR'):
-        device = 'tpu'
-        import torch_xla.core.xla_model as xm
-        import torch_xla.distributed.parallel_loader as pl
-        print('Using TPU')
-    else:
-        device = torch.device('cpu')
-        print('WARNING: No GPU detected. Training on CPU will be very slow!')
+    # Initialize model config with smaller architecture
+    model_config = MsingiConfig(
+        vocab_size=50000,
+        max_position_embeddings=1024,
+        hidden_size=384,
+        num_hidden_layers=6,
+        num_attention_heads=6,
+        intermediate_size=1536,
+        gradient_checkpointing=True
+    )
     
-    print(f'Training on {device}')
+    # Initialize training config
+    training_config = TrainingConfig(
+        num_epochs=25,
+        batch_size=8,
+        learning_rate=3e-4,
+        warmup_steps=1000,
+        grad_acc_steps=8,
+        save_steps=500,
+        eval_steps=100,
+        fp16=True,
+        early_stopping_patience=3
+    )
+    
+    # Create checkpoint directory
+    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
     
     # Train model
-    train(config, train_texts, val_texts,
-          num_epochs=100,
-          batch_size=4,
-          learning_rate=3e-4,
-          warmup_steps=1000,
-          grad_acc_steps=16,
-          save_steps=1000,
-          checkpoint_dir='checkpoints',
-          device=device)
+    train(model_config=model_config,
+          train_texts=train_texts,
+          val_texts=val_texts,
+          training_config=training_config)
