@@ -11,7 +11,7 @@ import math
 from typing import Optional, List
 import numpy as np
 from tokenizers import Tokenizer
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import autocast
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
 
@@ -75,7 +75,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
     
     # Initialize mixed precision training
-    scaler = GradScaler() if training_config.fp16 and torch.cuda.is_available() else None
+    scaler = torch.amp.GradScaler('cuda') if training_config.fp16 and torch.cuda.is_available() else None
     # Initialize wandb
     use_wandb = True
     if use_wandb:
@@ -97,21 +97,25 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         )
     
     # Create checkpoint directory
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    
+    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+
     # Initialize model and move to device
-    model = Msingi1(config)
+    model = Msingi1(model_config)
     model = model.to(device)
     
     # Initialize optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=training_config.learning_rate)
     
     # Load checkpoint if exists
     start_epoch = 0
-    if os.path.exists(os.path.join(checkpoint_dir, 'latest.pt')):
-        checkpoint = torch.load(os.path.join(checkpoint_dir, 'latest.pt'))
+    if os.path.exists(os.path.join(training_config.checkpoint_dir, 'latest.pt')):
+        checkpoint = torch.load(os.path.join(training_config.checkpoint_dir, 'latest.pt'))
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scheduler_state_dict' in checkpoint:
+            lr_scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        if 'scaler_state_dict' in checkpoint and scaler:
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
         start_epoch = checkpoint['epoch']
         print(f'Resuming from epoch {start_epoch}')
     
@@ -124,10 +128,10 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         val_loader = DataLoader(val_dataset, batch_size=training_config.batch_size)
     
     # Learning rate scheduler with warmup
-    num_training_steps = len(train_loader) * num_epochs
+    num_training_steps = len(train_loader) * training_config.num_epochs
     lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=warmup_steps,
+        num_warmup_steps=training_config.warmup_steps,
         num_training_steps=num_training_steps
     )
     
