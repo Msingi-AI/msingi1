@@ -56,18 +56,18 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             'article_selector': '.bbc-1fxtbkn, .story-body',
             'text_selector': '.bbc-1y32n3c, .story-body__inner p'
         },
-        # Kenya Swahili news
+        # More Tanzania sources
         {
-            'url': 'https://www.standardmedia.co.ke/category/595/kiswahili',
-            'article_selector': '.article-card, .article',
-            'text_selector': '.article-summary, .article-content'
+            'url': 'https://www.ippmedia.com/sw',
+            'article_selector': '.article, .news-item',
+            'text_selector': '.article-content, .news-content'
         },
         {
-            'url': 'https://www.nation.co.ke/swahili',
-            'article_selector': '.article-box, .story',
-            'text_selector': '.summary, .article-body'
+            'url': 'https://www.eatv.tv/news',
+            'article_selector': '.post, .article',
+            'text_selector': '.entry-content, .article-content'
         },
-        # Wikipedia Swahili articles
+        # Wikipedia Swahili articles - Main topics
         {
             'url': 'https://sw.wikipedia.org/wiki/Tanzania',
             'article_selector': '.mw-parser-output',
@@ -88,15 +88,42 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             'article_selector': '.mw-parser-output',
             'text_selector': 'p'
         },
-        # Additional Wikipedia categories
+        # More Wikipedia topics
         {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Historia',
+            'url': 'https://sw.wikipedia.org/wiki/Utamaduni_wa_Afrika_Mashariki',
+            'article_selector': '.mw-parser-output',
+            'text_selector': 'p'
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Siasa_za_Tanzania',
+            'article_selector': '.mw-parser-output',
+            'text_selector': 'p'
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Uchumi_wa_Tanzania',
+            'article_selector': '.mw-parser-output',
+            'text_selector': 'p'
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Elimu_Tanzania',
+            'article_selector': '.mw-parser-output',
+            'text_selector': 'p'
+        },
+        # Wikipedia categories with sub-pages
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Historia_ya_Tanzania',
             'article_selector': '.mw-category-group li a',
-            'text_selector': None,  # Will follow links
+            'text_selector': None,
             'is_category': True
         },
         {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Siasa',
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Siasa_za_Tanzania',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Utamaduni_wa_Tanzania',
             'article_selector': '.mw-category-group li a',
             'text_selector': None,
             'is_category': True
@@ -150,15 +177,25 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             if source.get('is_category', False):
                 # Get all article links from category
                 links = soup.select(source['article_selector'])
-                print(f"Found {len(links)} articles in category")
-                
-                # Visit each article
-                for link in links[:max_articles // len(sources)]:
-                    article_url = 'https://sw.wikipedia.org' + link['href']
-                    print(f"Visiting article: {article_url}")
-                    article_texts = extract_text_from_url(article_url)
-                    source_texts.extend(article_texts)
+                if links:
+                    print(f"Found {len(links)} articles in category")
                     
+                    # Visit each article
+                    for link in links[:max_articles // len(sources)]:
+                        try:
+                            href = link.get('href')
+                            if href:
+                                if not href.startswith('http'):
+                                    article_url = 'https://sw.wikipedia.org' + href
+                                else:
+                                    article_url = href
+                                print(f"Visiting article: {article_url}")
+                                article_texts = extract_text_from_url(article_url)
+                                source_texts.extend(article_texts)
+                        except Exception as e:
+                            print(f"Error processing category link: {str(e)}")
+                            continue
+                            
             else:
                 # Try different selectors
                 selectors = source['article_selector'].split(', ')
