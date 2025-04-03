@@ -132,12 +132,20 @@ def train(config: MsingiConfig, train_texts: List[str], val_texts: Optional[List
             loss.backward()
             
             if (step + 1) % grad_acc_steps == 0:
+                # Clip gradients
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                
+                # Step optimizer first
                 if device == 'tpu':
                     import torch_xla.core.xla_model as xm
                     xm.optimizer_step(optimizer)
                 else:
                     optimizer.step()
+                
+                # Then step scheduler
+                lr_scheduler.step()
+                
+                # Clear gradients
                 optimizer.zero_grad()
                 
                 # Save checkpoint
@@ -246,15 +254,18 @@ if __name__ == "__main__":
     # Initialize config
     config = MsingiConfig()
     
-    # Detect device
-    device = 'cpu'
+    # Detect device and move to GPU if available
     if torch.cuda.is_available():
-        device = 'cuda'
+        device = torch.device('cuda')
+        print(f'Using GPU: {torch.cuda.get_device_name(0)}')
     elif os.environ.get('COLAB_TPU_ADDR'):
         device = 'tpu'
-        # TPU-specific imports and setup
         import torch_xla.core.xla_model as xm
         import torch_xla.distributed.parallel_loader as pl
+        print('Using TPU')
+    else:
+        device = torch.device('cpu')
+        print('WARNING: No GPU detected. Training on CPU will be very slow!')
     
     print(f'Training on {device}')
     
