@@ -36,17 +36,6 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
     
     # List of Swahili news sources
     sources = [
-        # Tanzania Government Sites
-        {
-            'url': 'https://www.tanzania.go.tz/home/pages/3357',
-            'article_selector': '.article-content, .content-area',
-            'text_selector': 'p, .text-content'
-        },
-        {
-            'url': 'https://www.ikulu.go.tz',
-            'article_selector': '.news-item, .article',
-            'text_selector': '.news-content, p'
-        },
         # Tanzania News Sites
         {
             'url': 'https://www.mwananchi.co.tz',
@@ -64,25 +53,39 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             'text_selector': '.article-summary, .article-content, p'
         },
         {
-            'url': 'https://habarileo.co.tz',
-            'article_selector': '.article, .post',
-            'text_selector': '.article-content, .entry-content'
+            'url': 'https://www.mwananchi.co.tz/mw/biashara',
+            'article_selector': 'article, .article-item',
+            'text_selector': '.article-summary, .article-content, p'
         },
         {
-            'url': 'https://www.majira.co.tz',
-            'article_selector': '.post, .article',
-            'text_selector': '.entry-content, .article-content'
+            'url': 'https://www.mwananchi.co.tz/mw/burudani',
+            'article_selector': 'article, .article-item',
+            'text_selector': '.article-summary, .article-content, p'
         },
-        # Educational Resources
+        # Religious Texts
         {
-            'url': 'https://www.elimu.go.tz',
-            'article_selector': '.content-area, .page-content',
-            'text_selector': 'p, .text-content'
+            'url': 'https://sw.wikisource.org/wiki/Biblia',
+            'article_selector': '.mw-parser-output',
+            'text_selector': 'p'
         },
         {
-            'url': 'https://www.out.ac.tz',
-            'article_selector': '.content, .article',
-            'text_selector': 'p, .text-content'
+            'url': 'https://sw.wikisource.org/wiki/Kategoria:Biblia',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        # Literature and Poetry
+        {
+            'url': 'https://sw.wikisource.org/wiki/Kategoria:Fasihi',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikisource.org/wiki/Kategoria:Mashairi',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
         },
         # Wikipedia Main Articles
         {
@@ -105,49 +108,6 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             'article_selector': '.mw-parser-output',
             'text_selector': 'p'
         },
-        # Wikipedia Categories
-        {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Historia_ya_Tanzania',
-            'article_selector': '.mw-category-group li a',
-            'text_selector': None,
-            'is_category': True
-        },
-        {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Utamaduni_wa_Tanzania',
-            'article_selector': '.mw-category-group li a',
-            'text_selector': None,
-            'is_category': True
-        },
-        {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Elimu_Tanzania',
-            'article_selector': '.mw-category-group li a',
-            'text_selector': None,
-            'is_category': True
-        },
-        {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Mawasiliano_Tanzania',
-            'article_selector': '.mw-category-group li a',
-            'text_selector': None,
-            'is_category': True
-        },
-        {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Uchumi_wa_Tanzania',
-            'article_selector': '.mw-category-group li a',
-            'text_selector': None,
-            'is_category': True
-        },
-        {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Lugha_za_Tanzania',
-            'article_selector': '.mw-category-group li a',
-            'text_selector': None,
-            'is_category': True
-        },
-        {
-            'url': 'https://sw.wikipedia.org/wiki/Jamii:Dini_Tanzania',
-            'article_selector': '.mw-category-group li a',
-            'text_selector': None,
-            'is_category': True
-        },
         # Additional Wikipedia Categories
         {
             'url': 'https://sw.wikipedia.org/wiki/Jamii:Fasihi',
@@ -169,6 +129,79 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
         },
         {
             'url': 'https://sw.wikipedia.org/wiki/Jamii:Michezo',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        # More Wikipedia Categories
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Maisha',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Sayansi',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Teknolojia',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Falsafa',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Siasa',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Uchumi',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Jamii',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Utamaduni',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Dini',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Elimu',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Afya',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Mazingira',
             'article_selector': '.mw-category-group li a',
             'text_selector': None,
             'is_category': True
@@ -230,14 +263,15 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
                         try:
                             href = link.get('href')
                             if href:
+                                base_url = 'https://sw.wikipedia.org' if 'wikipedia' in source['url'] else 'https://sw.wikisource.org'
                                 if not href.startswith('http'):
-                                    article_url = 'https://sw.wikipedia.org' + href
+                                    article_url = base_url + href
                                 else:
                                     article_url = href
                                 print(f"Visiting article: {article_url}")
                                 article_texts = extract_text_from_url(article_url)
                                 source_texts.extend(article_texts)
-                                time.sleep(1)  # Be nice to Wikipedia
+                                time.sleep(1)  # Be nice to servers
                         except Exception as e:
                             print(f"Error processing category link: {str(e)}")
                             continue
@@ -258,8 +292,8 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
                     for selector in text_selectors:
                         paragraphs.extend(article.select(selector))
                     
-                    if not paragraphs and 'wiki' in source['url']:
-                        # Special handling for Wikipedia: get all paragraphs
+                    if not paragraphs and ('wiki' in source['url'] or 'wikisource' in source['url']):
+                        # Special handling for Wiki pages: get all paragraphs
                         paragraphs = article.find_all('p', recursive=True)
                     
                     texts = []
