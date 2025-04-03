@@ -42,25 +42,17 @@ class SwahiliDataset(Dataset):
             "labels": torch.tensor(labels, dtype=torch.long)
         }
 
-def train(
-    config: MsingiConfig,
-    train_texts: List[str],
-    val_texts: Optional[List[str]] = None,
-    num_epochs: int = 10,
-    batch_size: int = 8,
-    gradient_accumulation_steps: int = 8,
-    learning_rate: float = 3e-4,
-    max_length: int = 1024,
-    warmup_steps: int = 1000,
-    save_steps: int = 1000,
-    eval_steps: int = 500,
-    save_dir: str = "checkpoints",
-    tokenizer_path: str = "tokenizer/tokenizer.json",
-    use_wandb: bool = True,
-):
-    """Train the Msingi1 model."""
-    
+def train(config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
+         num_epochs: int = 100,
+         batch_size: int = 4,
+         learning_rate: float = 3e-4,
+         warmup_steps: int = 1000,
+         grad_acc_steps: int = 16,
+         save_steps: int = 1000,
+         checkpoint_dir: str = 'checkpoints',
+         device: str = 'cuda' if torch.cuda.is_available() else 'cpu'):
     # Initialize wandb
+    use_wandb = True
     if use_wandb:
         wandb.init(
             project="msingi1",
@@ -69,34 +61,38 @@ def train(
                 "dataset": "Swahili",
                 "epochs": num_epochs,
                 "batch_size": batch_size,
-                "gradient_accumulation_steps": gradient_accumulation_steps,
+                "gradient_accumulation_steps": grad_acc_steps,
                 "learning_rate": learning_rate,
-                "max_length": max_length,
                 "warmup_steps": warmup_steps,
             }
         )
     
-    # Create save directory
-    os.makedirs(save_dir, exist_ok=True)
+    # Create checkpoint directory
+    os.makedirs(checkpoint_dir, exist_ok=True)
     
-    # Initialize model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = Msingi1(config).to(device)
-    
-    # Enable gradient checkpointing if available
-    if hasattr(model, "gradient_checkpointing_enable"):
-        model.gradient_checkpointing_enable()
-    
-    # Create datasets
-    train_dataset = SwahiliDataset(train_texts, tokenizer_path, max_length)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    
-    if val_texts:
-        val_dataset = SwahiliDataset(val_texts, tokenizer_path, max_length)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size)
+    # Initialize model and move to device
+    model = Msingi1(config)
+    model = model.to(device)
     
     # Initialize optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    
+    # Load checkpoint if exists
+    start_epoch = 0
+    if os.path.exists(os.path.join(checkpoint_dir, 'latest.pt')):
+        checkpoint = torch.load(os.path.join(checkpoint_dir, 'latest.pt'))
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch']
+        print(f'Resuming from epoch {start_epoch}')
+    
+    # Create datasets
+    train_dataset = SwahiliDataset(train_texts, "tokenizer/tokenizer.json", 1024)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    
+    if val_texts:
+        val_dataset = SwahiliDataset(val_texts, "tokenizer/tokenizer.json", 1024)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size)
     
     # Learning rate scheduler with warmup
     num_training_steps = len(train_loader) * num_epochs
@@ -109,8 +105,7 @@ def train(
     # Training loop
     global_step = 0
     best_val_loss = float('inf')
-    
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         model.train()
         total_loss = 0
         optimizer.zero_grad()
@@ -133,16 +128,34 @@ def train(
             )
             
             # Scale loss by gradient accumulation steps
-            loss = loss / gradient_accumulation_steps
+            loss = loss / grad_acc_steps
             loss.backward()
             
-            if (step + 1) % gradient_accumulation_steps == 0:
+            if (step + 1) % grad_acc_steps == 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                lr_scheduler.step()
+                if device == 'tpu':
+                    import torch_xla.core.xla_model as xm
+                    xm.optimizer_step(optimizer)
+                else:
+                    optimizer.step()
                 optimizer.zero_grad()
+                
+                # Save checkpoint
+                if (step + 1) % save_steps == 0:
+                    checkpoint = {
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        'loss': loss.item(),
+                    }
+                    torch.save(checkpoint, os.path.join(checkpoint_dir, 'latest.pt'))
+                    
+                    # Save best model
+                    if val_texts and loss.item() < best_val_loss:
+                        best_val_loss = loss.item()
+                        torch.save(checkpoint, os.path.join(checkpoint_dir, 'best.pt'))
             
-            total_loss += loss.item() * gradient_accumulation_steps
+            total_loss += loss.item() * grad_acc_steps
             
             # Update progress bar
             progress_bar.set_postfix({
@@ -153,7 +166,7 @@ def train(
             global_step += 1
             
             # Evaluation
-            if val_texts and global_step % eval_steps == 0:
+            if val_texts and global_step % 500 == 0:
                 val_loss = evaluate(model, val_loader, config, device)
                 
                 if use_wandb:
@@ -165,22 +178,13 @@ def train(
                 
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    model_path = os.path.join(save_dir, "best_model.pt")
+                    model_path = os.path.join(checkpoint_dir, "best_model.pt")
                     torch.save(model.state_dict(), model_path)
             
-            # Save checkpoint
-            if global_step % save_steps == 0:
-                model_path = os.path.join(save_dir, f"checkpoint-{global_step}.pt")
-                torch.save({
-                    "step": global_step,
-                    "model_state_dict": model.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                    "scheduler_state_dict": lr_scheduler.state_dict(),
-                    "loss": total_loss / (step + 1),
-                }, model_path)
+            lr_scheduler.step()
     
     # Save final model
-    model_path = os.path.join(save_dir, "final_model.pt")
+    model_path = os.path.join(checkpoint_dir, "final_model.pt")
     torch.save(model.state_dict(), model_path)
     
     if use_wandb:
@@ -242,18 +246,25 @@ if __name__ == "__main__":
     # Initialize config
     config = MsingiConfig()
     
-    # Train the model
-    train(
-        config=config,
-        train_texts=train_texts,
-        val_texts=val_texts,
-        num_epochs=10,
-        batch_size=4,  # Small batch size for Colab
-        gradient_accumulation_steps=16,  # Accumulate gradients to simulate larger batch
-        learning_rate=3e-4,
-        max_length=1024,
-        warmup_steps=1000,
-        save_steps=1000,
-        eval_steps=500,
-        use_wandb=True  # Set to False if you don't want to use wandb
-    )
+    # Detect device
+    device = 'cpu'
+    if torch.cuda.is_available():
+        device = 'cuda'
+    elif os.environ.get('COLAB_TPU_ADDR'):
+        device = 'tpu'
+        # TPU-specific imports and setup
+        import torch_xla.core.xla_model as xm
+        import torch_xla.distributed.parallel_loader as pl
+    
+    print(f'Training on {device}')
+    
+    # Train model
+    train(config, train_texts, val_texts,
+          num_epochs=100,
+          batch_size=4,
+          learning_rate=3e-4,
+          warmup_steps=1000,
+          grad_acc_steps=16,
+          save_steps=1000,
+          checkpoint_dir='checkpoints',
+          device=device)
