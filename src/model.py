@@ -11,12 +11,23 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     return freqs_cis
 
-def apply_rotary_emb(xq, xk, freqs_cis):
+def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply rotary embeddings to input tensors using precomputed frequencies"""
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
-    freqs_cis = freqs_cis[:xq_.shape[1], :]
-    xq_out = torch.view_as_real(xq_ * freqs_cis.unsqueeze(0)).flatten(3)
-    xk_out = torch.view_as_real(xk_ * freqs_cis.unsqueeze(0)).flatten(3)
+    
+    # Expand freqs_cis to match the batch size and number of heads
+    # freqs_cis shape: [seq_len, dim//2]
+    # xq_ shape: [batch, seq_len, n_heads, dim//2]
+    seq_len = xq_.shape[1]
+    freqs_cis = freqs_cis[:seq_len]  # [seq_len, dim//2]
+    
+    # Reshape for broadcasting
+    freqs_cis = freqs_cis.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
+    
+    # Apply rotation
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
+    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 class MsingiConfig:
@@ -47,6 +58,11 @@ class MsingiConfig:
         self.initializer_range = initializer_range
         self.use_cache = use_cache
         self.gradient_checkpointing = gradient_checkpointing
+        
+        # Ensure hidden size is divisible by num_attention_heads
+        assert hidden_size % num_attention_heads == 0, "hidden_size must be divisible by num_attention_heads"
+        # Ensure hidden size is divisible by 2 for rotary embeddings
+        assert hidden_size % 2 == 0, "hidden_size must be even for rotary embeddings"
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, config):
@@ -66,6 +82,7 @@ class MultiHeadAttention(nn.Module):
     def forward(self, hidden_states, freqs_cis, attention_mask=None):
         batch_size, seq_length = hidden_states.shape[:2]
         
+        # Project and reshape
         q = self.q_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
         k = self.k_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
         v = self.v_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
@@ -73,12 +90,12 @@ class MultiHeadAttention(nn.Module):
         # Apply rotary embeddings
         q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
         
-        # Efficient attention computation
+        # Transpose for attention computation
         q = q.transpose(1, 2)  # (batch, n_heads, seq_len, head_dim)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
         
-        # Flash attention-like computation (simplified version)
+        # Compute attention scores
         scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
         
         if attention_mask is not None:
@@ -87,6 +104,7 @@ class MultiHeadAttention(nn.Module):
         attention_weights = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(q)
         attention_weights = self.dropout(attention_weights)
         
+        # Compute output
         output = torch.matmul(attention_weights, v)
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_length, self.hidden_size)
         
@@ -133,7 +151,7 @@ class Msingi1(nn.Module):
         # Language modeling head
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         
-        # Tie weights if needed
+        # Tie weights
         self.lm_head.weight = self.embeddings.weight
         
     def _init_weights(self, module):
