@@ -145,7 +145,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         total_loss = 0
         optimizer.zero_grad()
         
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_config.num_epochs}")
         
         for step, batch in enumerate(progress_bar):
             input_ids = batch["input_ids"].to(device)
@@ -207,7 +207,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                                 print(f'Early stopping triggered after {epoch + 1} epochs')
                                 break
             
-            total_loss += loss.item() * grad_acc_steps
+            total_loss += loss.item() * training_config.grad_acc_steps
             
             # Update progress bar
             progress_bar.set_postfix({
@@ -219,7 +219,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             
             # Evaluation
             if val_texts and global_step % 500 == 0:
-                val_loss = evaluate(model, val_loader, config, device)
+                val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
                 
                 if use_wandb:
                     wandb.log({
