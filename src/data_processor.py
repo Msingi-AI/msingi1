@@ -36,7 +36,7 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
     
     # List of Swahili news sources
     sources = [
-        # Tanzania News Sites
+        # News Sites
         {
             'url': 'https://www.mwananchi.co.tz',
             'article_selector': 'article, .article-item',
@@ -52,6 +52,144 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
             'article_selector': 'article, .article-item',
             'text_selector': '.article-summary, .article-content, p'
         },
+        {
+            'url': 'https://www.bbc.com/swahili',
+            'article_selector': '.bbc-1fxtbkn, .story-body',
+            'text_selector': '.bbc-4wucq3, p'
+        },
+        {
+            'url': 'https://www.bbc.com/swahili/topics/c2dwqd1zr92t',  # Latest news
+            'article_selector': '.bbc-1fxtbkn, .story-body',
+            'text_selector': '.bbc-4wucq3, p'
+        },
+        {
+            'url': 'https://www.bbc.com/swahili/topics/c06gq9jxz3rt',  # Sports
+            'article_selector': '.bbc-1fxtbkn, .story-body',
+            'text_selector': '.bbc-4wucq3, p'
+        },
+        {
+            'url': 'https://www.bbc.com/swahili/topics/cg726y2k82dt',  # Entertainment
+            'article_selector': '.bbc-1fxtbkn, .story-body',
+            'text_selector': '.bbc-4wucq3, p'
+        },
+        {
+            'url': 'https://www.dw.com/sw/',
+            'article_selector': '.col2-wide, .article',
+            'text_selector': '.longText, p'
+        },
+        {
+            'url': 'https://www.dw.com/sw/idhaa-ya-kiswahili/s-11588',
+            'article_selector': '.col2-wide, .article',
+            'text_selector': '.longText, p'
+        },
+        {
+            'url': 'https://www.voanews.com/swahili',
+            'article_selector': '.media-block, .teaser',
+            'text_selector': '.wsw, .content-offset'
+        },
+        {
+            'url': 'https://www.voaswahili.com',
+            'article_selector': '.media-block, .teaser',
+            'text_selector': '.wsw, .content-offset'
+        },
+        # Educational Resources
+        {
+            'url': 'https://kiswahili.udsm.ac.tz',  # University of Dar es Salaam
+            'article_selector': '.content-area, .entry-content',
+            'text_selector': 'p, .text-content'
+        },
+        {
+            'url': 'https://www.swahilihub.com',
+            'article_selector': '.article, .post',
+            'text_selector': '.entry-content, p'
+        },
+        # Religious Texts and Literature
+        {
+            'url': 'https://sw.wikisource.org/wiki/Biblia_Takatifu',
+            'article_selector': '.mw-parser-output',
+            'text_selector': 'p'
+        },
+        # Additional Wikipedia Categories
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Lugha_za_Afrika',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Wanyama',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Mimea',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Vyakula',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Magonjwa',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Madawa',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Viwanda',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Biashara',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Mawasiliano',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Usafiri',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Utalii',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Nyumba',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        },
+        {
+            'url': 'https://sw.wikipedia.org/wiki/Jamii:Familia',
+            'article_selector': '.mw-category-group li a',
+            'text_selector': None,
+            'is_category': True
+        }
+    ] + [
+        # Tanzania News Sites
         {
             'url': 'https://www.mwananchi.co.tz/mw/biashara',
             'article_selector': 'article, .article-item',
