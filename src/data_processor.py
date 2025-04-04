@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 import re
 import time
+import zipfile
 
 def clean_text(text: str) -> str:
     """Clean and normalize text."""
@@ -181,53 +182,124 @@ def process_scraped_data(force_clean: bool = False, max_samples: int = 5000) -> 
     
     return cleaned_texts
 
+def load_training_data(file_path: str) -> List[Dict[str, str]]:
+    """Load and process training data from a file."""
+    texts = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                text = line.strip()
+                if text:
+                    # Basic quality check - just remove empty lines
+                    words = text.split()
+                    if len(words) > 0:
+                            # Categorize the text
+                            if any(word in text.lower() for word in ['habari', 'taarifa', 'ripoti', 'gazeti']):
+                                category = 'news'
+                            elif any(word in text.lower() for word in ['elimu', 'masomo', 'shule']):
+                                category = 'education'
+                            elif any(word in text.lower() for word in ['utamaduni', 'mila', 'desturi']):
+                                category = 'culture'
+                            elif any(word in text.lower() for word in ['siasa', 'serikali', 'bunge']):
+                                category = 'politics'
+                            elif any(word in text.lower() for word in ['biashara', 'uchumi', 'fedha']):
+                                category = 'business'
+                            else:
+                                category = 'general'
+                            
+                            texts.append({
+                                'text': text,
+                                'category': category,
+                                'source': 'dataset'
+                            })
+                            
+                            # No sample limit, collect all data
+    except Exception as e:
+        print(f"Error loading {file_path}: {str(e)}")
+    
+    return texts
+
 def load_swahili_dataset(max_samples: int = 5000) -> List[Dict[str, str]]:
     """
     Load the combined Swahili dataset.
     Returns:
         List of text samples
     """
-    # Process scraped data with size limit
-    texts = process_scraped_data(force_clean=True, max_samples=max_samples)
+    all_texts = []
     
-    # Load additional text samples
-    sample_texts = []
-    try:
-        with open("data/Swahili data/Swahili data/train.txt", 'r', encoding='utf-8') as f:
-            raw_samples = f.readlines()
-            # Convert raw samples to dictionary format
-            for text in raw_samples:
-                text = text.strip()
-                if len(text.split()) >= 20 and len(text.split()) <= 150:
-                    sample_texts.append({'text': text, 'category': 'general'})
-        print(f"Loaded {len(sample_texts)} text samples from the dataset")
-    except Exception as e:
-        print(f"Note: Could not load additional samples: {str(e)}")
+    # Load from original dataset files
+    data_dir = "data/Swahili data/Swahili data"
+    train_file = os.path.join(data_dir, "train.txt")
+    valid_file = os.path.join(data_dir, "valid.txt")
     
-    # Combine all texts
-    all_texts = texts + sample_texts
+    # Load ALL training data
+    train_texts = load_training_data(train_file)
+    print(f"Loaded {len(train_texts)} samples from training set")
+    train_stats = get_word_stats(train_texts)
+    print(f"Training set stats:")
+    print(f"- Total words: {format_number(train_stats['total_words'])}")
+    print(f"- Unique words: {format_number(train_stats['unique_words'])}")
+    print(f"- Average words per sample: {train_stats['words_per_sample']:.1f}")
+    all_texts.extend(train_texts)
+    
+    # Load ALL validation data
+    valid_texts = load_training_data(valid_file)
+    print(f"\nLoaded {len(valid_texts)} samples from validation set")
+    valid_stats = get_word_stats(valid_texts)
+    print(f"Validation set stats:")
+    print(f"- Total words: {format_number(valid_stats['total_words'])}")
+    print(f"- Unique words: {format_number(valid_stats['unique_words'])}")
+    print(f"- Average words per sample: {valid_stats['words_per_sample']:.1f}")
+    all_texts.extend(valid_texts)
+    
+    # Process scraped data
+    print("\nProcessing scraped data...")
+    scraped_texts = process_scraped_data(force_clean=True)
+    print(f"Loaded {len(scraped_texts)} samples from scraped data")
+    scraped_stats = get_word_stats(scraped_texts)
+    print(f"Scraped data stats:")
+    print(f"- Total words: {format_number(scraped_stats['total_words'])}")
+    print(f"- Unique words: {format_number(scraped_stats['unique_words'])}")
+    print(f"- Average words per sample: {scraped_stats['words_per_sample']:.1f}")
+    all_texts.extend(scraped_texts)
+    
+    # Shuffle the combined dataset
+    random.shuffle(all_texts)
+    
+    # Get combined statistics
+    combined_stats = get_word_stats(all_texts)
     
     # Print statistics
-    print("\nCombined dataset size:", len(all_texts), "documents")
-    print("\nDataset Statistics:")
-    print(f"num_samples: {len(all_texts)}")
-    total_chars = sum(len(item['text']) for item in all_texts)
-    total_words = sum(len(item['text'].split()) for item in all_texts)
-    categories_count = dict([(cat, sum(1 for x in all_texts if x['category'] == cat)) 
-                            for cat in set(x['category'] for x in all_texts)])
-    print(f"total_characters: {total_chars:,}")
-    print(f"total_words: {total_words:,}")
-    print(f"avg_sample_length: {total_chars / len(all_texts):.2f}")
-    print(f"avg_words_per_sample: {total_words / len(all_texts):.2f}")
-    print(f"\nCategory Distribution:")
-    for cat, count in categories_count.items():
-        print(f"{cat}: {count} samples ({count/len(all_texts)*100:.1f}%)")
+    print(f"\n{'='*50}")
+    print(f"COMBINED DATASET STATISTICS")
+    print(f"{'='*50}")
+    print(f"Total samples: {format_number(len(all_texts))}")
+    print(f"Total words: {format_number(combined_stats['total_words'])}")
+    print(f"Unique words: {format_number(combined_stats['unique_words'])}")
+    print(f"Average words per sample: {combined_stats['words_per_sample']:.1f}")
+    print(f"Average word length: {combined_stats['avg_word_length']:.1f} characters")
+    
+    # Category distribution
+    categories = {}
+    sources = {'dataset': 0, 'scraped': 0}
+    
+    for item in all_texts:
+        categories[item['category']] = categories.get(item['category'], 0) + 1
+        sources[item.get('source', 'scraped')] = sources.get(item.get('source', 'scraped'), 0) + 1
+    
+    print("\nCategory Distribution:")
+    for cat, count in categories.items():
+        print(f"{cat}: {format_number(count)} samples ({count/len(all_texts)*100:.1f}%)")
+    
+    print("\nSource Distribution:")
+    for source, count in sources.items():
+        print(f"{source}: {format_number(count)} samples ({count/len(all_texts)*100:.1f}%)")
     
     # Print sample texts
     print("\nSample texts:\n")
     for i, item in enumerate(all_texts[:3], 1):
         preview = item['text'][:200] + "..."
-        print(f"Sample {i} ({item['category']}):\n{preview}\n")
+        print(f"Sample {i} ({item['category']}, {item.get('source', 'scraped')}):\n{preview}\n")
     
     return all_texts
 
@@ -579,6 +651,30 @@ def get_dataset_stats(texts: List[str]) -> Dict:
         "total_words": total_words,
         "avg_sample_length": total_chars / len(texts) if texts else 0,
         "avg_words_per_sample": total_words / len(texts) if texts else 0
+    }
+
+def format_number(num):
+    """Format large numbers with commas and abbreviate if over a million."""
+    if num >= 1_000_000:
+        return f"{num/1_000_000:.2f}M"
+    return f"{num:,}"
+
+def get_word_stats(texts):
+    """Get detailed word statistics from texts."""
+    total_words = sum(len(item['text'].split()) for item in texts)
+    unique_words = set()
+    word_lengths = []
+    
+    for item in texts:
+        words = item['text'].split()
+        unique_words.update(words)
+        word_lengths.extend(len(word) for word in words)
+    
+    return {
+        'total_words': total_words,
+        'unique_words': len(unique_words),
+        'avg_word_length': sum(word_lengths) / len(word_lengths) if word_lengths else 0,
+        'words_per_sample': total_words / len(texts) if texts else 0
     }
 
 if __name__ == "__main__":
