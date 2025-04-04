@@ -1,6 +1,7 @@
 import os
-import zipfile
+import re
 import json
+import random
 from typing import List, Dict
 from pathlib import Path
 from tqdm import tqdm
@@ -26,7 +27,7 @@ def clean_text(text: str) -> str:
     text = text.strip()
     return text
 
-def process_scraped_data(force_clean: bool = False) -> List[str]:
+def process_scraped_data(force_clean: bool = False, max_samples: int = 5000) -> List[Dict[str, str]]:
     """
     Process and clean the scraped data.
     Args:
@@ -53,6 +54,14 @@ def process_scraped_data(force_clean: bool = False) -> List[str]:
     
     print(f"Processing {len(texts)} text samples...")
     cleaned_texts = []
+    
+    # Define categories for better domain coverage
+    categories = {
+        'news': [],
+        'education': [],
+        'culture': [],
+        'general': []
+    }
     
     for text in texts:
         # Basic cleaning
@@ -106,12 +115,42 @@ def process_scraped_data(force_clean: bool = False) -> List[str]:
         text = re.sub(r'\s+', ' ', text)  # Normalize whitespace again
         text = text.strip()
         
-        # Only keep substantial paragraphs
-        if len(text.split()) >= 50:  # Increased minimum word count for better quality
-            cleaned_texts.append(text)
+        # Only keep high-quality paragraphs
+        words = text.split()
+        if len(words) >= 20 and len(words) <= 150:  # Adjusted length for small model training
+            # Basic quality checks
+            if not any(word.isdigit() for word in words[:5]):  # Avoid texts starting with numbers
+                if sum(1 for w in words if len(w) > 2) / len(words) > 0.8:  # Ensure meaningful words
+                    # Categorize the text
+                    # More comprehensive Swahili keywords for better categorization
+                    if any(word in text.lower() for word in ['habari', 'taarifa', 'ripoti', 'gazeti', 'vyombo', 'magazeti']):
+                        categories['news'].append({'text': text, 'category': 'news'})
+                    elif any(word in text.lower() for word in ['elimu', 'masomo', 'chuo', 'shule', 'wanafunzi', 'mwalimu', 'darasa']):
+                        categories['education'].append({'text': text, 'category': 'education'})
+                    elif any(word in text.lower() for word in ['utamaduni', 'mila', 'desturi', 'sanaa', 'sherehe', 'ngoma', 'tamaduni']):
+                        categories['culture'].append({'text': text, 'category': 'culture'})
+                    else:
+                        # Check for other common domains
+                        if any(word in text.lower() for word in ['siasa', 'serikali', 'bunge', 'uchaguzi']):
+                            categories['general'].append({'text': text, 'category': 'politics'})
+                        elif any(word in text.lower() for word in ['biashara', 'uchumi', 'fedha', 'masoko']):
+                            categories['general'].append({'text': text, 'category': 'business'})
+                        else:
+                            categories['general'].append({'text': text, 'category': 'general'})
     
-    # Remove duplicates while preserving order
-    cleaned_texts = list(dict.fromkeys(cleaned_texts))
+    # Balance categories and combine
+    samples_per_category = max(1, min(max_samples // len(categories), 
+                                     min(len(cat) for cat in categories.values() if cat)))
+    
+    for category, texts in categories.items():
+        if texts:  # If category has any texts
+            # Prioritize diverse samples by taking from different parts of the list
+            step = max(1, len(texts) // samples_per_category)
+            selected = texts[::step][:samples_per_category]
+            cleaned_texts.extend(selected)
+    
+    # Shuffle to mix categories
+    random.shuffle(cleaned_texts)
     
     # Save cleaned texts
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -120,43 +159,47 @@ def process_scraped_data(force_clean: bool = False) -> List[str]:
     print(f"\nSaved {len(cleaned_texts)} cleaned articles to {output_file}")
     
     # Print some statistics
-    total_words = sum(len(text.split()) for text in cleaned_texts)
-    total_chars = sum(len(text) for text in cleaned_texts)
+    total_words = sum(len(item['text'].split()) for item in cleaned_texts)
+    total_chars = sum(len(item['text']) for item in cleaned_texts)
+    categories_count = dict([(cat, sum(1 for x in cleaned_texts if x['category'] == cat)) 
+                            for cat in set(x['category'] for x in cleaned_texts)])
     print(f"\nDataset Statistics:")
     print(f"num_samples: {len(cleaned_texts)}")
     print(f"total_words: {total_words:,}")
     print(f"total_characters: {total_chars:,}")
     print(f"avg_words_per_sample: {total_words / len(cleaned_texts):.2f}")
     print(f"avg_chars_per_sample: {total_chars / len(cleaned_texts):.2f}")
+    print(f"\nCategory Distribution:")
+    for cat, count in categories_count.items():
+        print(f"{cat}: {count} samples ({count/len(cleaned_texts)*100:.1f}%)")
     
     # Print a few sample texts
     print("\nSample texts:\n")
-    for i, text in enumerate(cleaned_texts[:3], 1):
-        preview = text[:200] + "..."
-        print(f"Sample {i}:\n{preview}\n")
+    for i, item in enumerate(cleaned_texts[:3], 1):
+        preview = item['text'][:200] + "..."
+        print(f"Sample {i} ({item['category']}):\n{preview}\n")
     
     return cleaned_texts
 
-def load_swahili_dataset() -> List[str]:
+def load_swahili_dataset(max_samples: int = 5000) -> List[Dict[str, str]]:
     """
     Load the combined Swahili dataset.
     Returns:
         List of text samples
     """
-    # First try to load cleaned data
-    cleaned_file = "cleaned_swahili.json"
-    if os.path.exists(cleaned_file):
-        with open(cleaned_file, 'r', encoding='utf-8') as f:
-            texts = json.load(f)
-    else:
-        # If no cleaned data, process scraped data
-        texts = process_scraped_data()
+    # Process scraped data with size limit
+    texts = process_scraped_data(force_clean=True, max_samples=max_samples)
     
     # Load additional text samples
     sample_texts = []
     try:
         with open("data/Swahili data/Swahili data/train.txt", 'r', encoding='utf-8') as f:
-            sample_texts = f.readlines()
+            raw_samples = f.readlines()
+            # Convert raw samples to dictionary format
+            for text in raw_samples:
+                text = text.strip()
+                if len(text.split()) >= 20 and len(text.split()) <= 150:
+                    sample_texts.append({'text': text, 'category': 'general'})
         print(f"Loaded {len(sample_texts)} text samples from the dataset")
     except Exception as e:
         print(f"Note: Could not load additional samples: {str(e)}")
@@ -168,18 +211,23 @@ def load_swahili_dataset() -> List[str]:
     print("\nCombined dataset size:", len(all_texts), "documents")
     print("\nDataset Statistics:")
     print(f"num_samples: {len(all_texts)}")
-    total_chars = sum(len(text) for text in all_texts)
-    total_words = sum(len(text.split()) for text in all_texts)
+    total_chars = sum(len(item['text']) for item in all_texts)
+    total_words = sum(len(item['text'].split()) for item in all_texts)
+    categories_count = dict([(cat, sum(1 for x in all_texts if x['category'] == cat)) 
+                            for cat in set(x['category'] for x in all_texts)])
     print(f"total_characters: {total_chars:,}")
     print(f"total_words: {total_words:,}")
     print(f"avg_sample_length: {total_chars / len(all_texts):.2f}")
     print(f"avg_words_per_sample: {total_words / len(all_texts):.2f}")
+    print(f"\nCategory Distribution:")
+    for cat, count in categories_count.items():
+        print(f"{cat}: {count} samples ({count/len(all_texts)*100:.1f}%)")
     
     # Print sample texts
     print("\nSample texts:\n")
-    for i, text in enumerate(all_texts[:3], 1):
-        preview = text[:200] + "..."
-        print(f"Sample {i}:\n{preview}\n")
+    for i, item in enumerate(all_texts[:3], 1):
+        preview = item['text'][:200] + "..."
+        print(f"Sample {i} ({item['category']}):\n{preview}\n")
     
     return all_texts
 
