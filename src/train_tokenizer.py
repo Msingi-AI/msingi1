@@ -1,7 +1,9 @@
 import os
 import sys
+import json
 from pathlib import Path
-from tokenizers import ByteLevelBPETokenizer, Tokenizer
+from typing import List, Dict, Union
+from tokenizers import ByteLevelBPETokenizer
 
 # Set console to UTF-8 mode
 if sys.platform == 'win32':
@@ -12,64 +14,88 @@ project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.append(project_root)
 
-from src.data_processor import extract_dataset, get_dataset_stats
+from src.data_processor import load_swahili_dataset
 
 def train_tokenizer(
-    texts=None,
-    vocab_size=50000,
-    min_frequency=2,
-    save_dir="tokenizer",
-    special_tokens=["<s>", "</s>", "<unk>", "<pad>"]
-):
+    texts: Union[List[str], List[Dict[str, str]]] = None,
+    vocab_size: int = 32000,
+    min_frequency: int = 2,
+    save_dir: str = "tokenizer",
+    special_tokens: List[str] = ["<s>", "</s>", "<unk>", "<pad>"]
+) -> ByteLevelBPETokenizer:
     """
     Train a ByteLevelBPE tokenizer on Swahili text data.
     
     Args:
-        texts: List of text samples. If None, will load from archive.zip
-        vocab_size: Size of the vocabulary
+        texts: List of text samples or dictionaries with 'text' key
+        vocab_size: Size of the vocabulary (reduced for small model)
         min_frequency: Minimum frequency for a token to be included
         save_dir: Directory to save the tokenizer
         special_tokens: List of special tokens to add
     """
     if texts is None:
         print("Loading dataset...")
-        texts = extract_dataset("archive.zip")
-        stats = get_dataset_stats(texts)
-        print("\nDataset Statistics:")
-        for key, value in stats.items():
-            print(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value}")
+        texts = load_swahili_dataset(max_samples=2000)  # Limit samples for focused training
+    
+    # Extract text from dictionaries if needed
+    if isinstance(texts[0], dict):
+        texts = [item['text'] for item in texts]
     
     print(f"\nTraining tokenizer with vocab size {vocab_size}...")
     
-    # Initialize tokenizer
+    # Initialize tokenizer with Swahili-specific settings
     tokenizer = ByteLevelBPETokenizer(lowercase=True)
     
+    # Save texts to temporary file for training
+    temp_file = "temp_training_data.txt"
+    with open(temp_file, "w", encoding="utf-8") as f:
+        for text in texts:
+            f.write(text + "\n")
+    
     # Train tokenizer
-    tokenizer.train_from_iterator(
-        texts,
+    tokenizer.train(
+        files=[temp_file],
         vocab_size=vocab_size,
         min_frequency=min_frequency,
         special_tokens=special_tokens
     )
     
+    # Remove temporary file
+    os.remove(temp_file)
+    
     # Create directory if it doesn't exist
     os.makedirs(save_dir, exist_ok=True)
     
-    # Save the tokenizer files
-    tokenizer.save(f"{save_dir}/vocab.json")
-    tokenizer.save(f"{save_dir}/merges.txt")
-    tokenizer.save(f"{save_dir}/tokenizer.json")
+    # Save the tokenizer files in the requested format
+    tokenizer.save(f"{save_dir}/tokenizer.model")  # Save the model
+    
+    # Save vocabulary in a custom format
+    vocab = tokenizer.get_vocab()
+    with open(f"{save_dir}/tokenizer.vocab", "w", encoding="utf-8") as f:
+        for token, id in sorted(vocab.items(), key=lambda x: x[1]):
+            f.write(f"{token}\t{id}\n")
     
     print(f"Tokenizer saved to {save_dir}")
     
-    # Test the tokenizer
-    test_text = "Jambo! Habari yako? Leo ni siku nzuri."
-    encoded = tokenizer.encode(test_text)
+    # Test the tokenizer on different types of text
+    test_texts = [
+        "Jambo! Habari yako?",  # Greetings
+        "Elimu ni muhimu sana kwa maendeleo.",  # Education
+        "Utamaduni wetu ni hazina kubwa.",  # Culture
+        "Serikali imetangaza mpango mpya."  # Politics
+    ]
     
-    print("\nTokenizer test:")
-    print(f"Original text: {test_text}")
-    print(f"Encoded tokens: {' '.join(encoded.tokens)}")
-    print(f"Decoded: {tokenizer.decode(encoded.ids)}")
+    print("\nTokenizer tests:")
+    for test in test_texts:
+        encoded = tokenizer.encode(test)
+        print(f"\nOriginal: {test}")
+        print(f"Tokens: {encoded.tokens}")
+        print(f"Decoded: {tokenizer.decode(encoded.ids)}")
+    
+    # Print vocabulary statistics
+    print(f"\nVocabulary Statistics:")
+    print(f"Total vocab size: {len(vocab)}")
+    print(f"Special tokens: {special_tokens}")
     
     return tokenizer
 
