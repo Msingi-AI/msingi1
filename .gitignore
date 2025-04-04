@@ -175,3 +175,6 @@ cython_debug/
 
 #Original Dataset
 Swahili Corpus
+
+#Dataset
+data
