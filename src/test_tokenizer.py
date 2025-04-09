@@ -1,6 +1,6 @@
 import sys
-from tokenizers import Tokenizer
 from pathlib import Path
+from train_tokenizer import train_tokenizer
 
 # Set console to UTF-8 mode
 if sys.platform == 'win32':
@@ -8,12 +8,8 @@ if sys.platform == 'win32':
 
 def test_tokenizer(text: str):
     """Test the trained tokenizer with sample Swahili text."""
-    # Load the trained tokenizer
-    tokenizer_path = Path("tokenizer/tokenizer.json")
-    if not tokenizer_path.exists():
-        raise FileNotFoundError("Tokenizer not found! Please train the tokenizer first.")
-    
-    tokenizer = Tokenizer.from_file(str(tokenizer_path))
+    # Get the trained tokenizer
+    tokenizer = train_tokenizer()
     
     # Encode the text
     encoded = tokenizer.encode(text)
@@ -31,11 +27,31 @@ def test_tokenizer(text: str):
     print(f"Decoded text: {decoded}")
     print("-" * 50)
     print(f"Number of tokens: {len(encoded.tokens)}")
+    print(f"Average tokens per word: {len(encoded.tokens) / len(text.split()):.2f}")
 
 if __name__ == "__main__":
-    # Test with some Swahili sentences
-    test_text = """
-    Jambo! Leo ni siku nzuri. Tunaenda sokoni kununua matunda na mboga. 
-    Maisha ni safari ndefu, na kila siku tunajifunza mambo mapya.
-    """
-    test_tokenizer(test_text.strip())
+    # Test with various Swahili text samples
+    test_cases = [
+        # Basic greeting and simple sentence
+        "Jambo! Habari yako?",
+        
+        # Common phrase with numbers
+        "Nina umri wa miaka 25 na ninaishi Nairobi.",
+        
+        # Complex sentence with punctuation
+        "Elimu ni muhimu sana kwa maendeleo ya jamii; tunahitaji kufanya kazi kwa bidii!",
+        
+        # Technical terms and loan words
+        "Kompyuta yangu mpya ina programu za kisasa za teknolojia.",
+        
+        # Traditional proverb
+        "Haba na haba hujaza kibaba.",
+        
+        # Long compound sentence
+        """Tulienda sokoni asubuhi na mapema, tukanunua matunda mbalimbali kama vile machungwa, 
+        maembe, na mapapai, kisha tukarudi nyumbani kupika chakula cha mchana."""
+    ]
+    
+    for i, test_text in enumerate(test_cases, 1):
+        print(f"\n=== Test Case {i} ===")
+        test_tokenizer(test_text.strip())
