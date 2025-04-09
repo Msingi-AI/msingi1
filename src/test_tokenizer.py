@@ -1,6 +1,6 @@
 import sys
+from tokenizers import ByteLevelBPETokenizer
 from pathlib import Path
-from train_tokenizer import train_tokenizer
 
 # Set console to UTF-8 mode
 if sys.platform == 'win32':
@@ -8,8 +8,15 @@ if sys.platform == 'win32':
 
 def test_tokenizer(text: str):
     """Test the trained tokenizer with sample Swahili text."""
-    # Get the trained tokenizer
-    tokenizer = train_tokenizer()
+    # Load the trained tokenizer
+    tokenizer = ByteLevelBPETokenizer(
+        "tokenizer/tokenizer.model",
+        "tokenizer/tokenizer.vocab",
+    )
+    
+    # Add special tokens that were used during training
+    special_tokens = ["<s>", "</s>", "<unk>", "<pad>"]
+    tokenizer.add_special_tokens(special_tokens)
     
     # Encode the text
     encoded = tokenizer.encode(text)
