@@ -77,6 +77,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*/.ipynb_checkpoints/*
 
 # IPython
 profile_default/
@@ -173,8 +174,19 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-#Original Dataset
-Swahili Corpus
+# Large data files
+archive.zip
+*.json
+!package.json
 
-#Dataset
-data
+# Tokenizer files
+tokenizer/*.json
+tokenizer/*.txt
+tokenizer/*.model
+tokenizer/*.vocab
+
+# Dataset files
+data/
+Swahili Corpus/
+
+#Original Dataset
