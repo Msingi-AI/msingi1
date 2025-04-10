@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 from tokenizers import Tokenizer
-from train import SwahiliDataset
 
 # Set console to UTF-8 mode
 if sys.platform == 'win32':
@@ -9,9 +8,8 @@ if sys.platform == 'win32':
 
 def test_tokenizer(text: str):
     """Test the trained tokenizer with sample Swahili text."""
-    # Create a dummy dataset to get the tokenizer
-    dataset = SwahiliDataset([text], "tokenizer/tokenizer.json", max_length=2048)
-    tokenizer = dataset.tokenizer
+    # Load the trained tokenizer
+    tokenizer = Tokenizer.from_file("tokenizer/tokenizer.json")
     
     # Encode the text
     encoded = tokenizer.encode(text)
@@ -21,15 +19,18 @@ def test_tokenizer(text: str):
     print("-" * 50)
     print(f"Original text: {text}")
     print("-" * 50)
-    print("Tokens:", " ".join(encoded.tokens))  # Join tokens with spaces for better display
+    try:
+        print(f"Tokens: {' '.join(encoded.tokens)}")
+    except UnicodeEncodeError:
+        print("Tokens: <tokens contain special characters>")
     print("-" * 50)
-    print("Token IDs:", encoded.ids)
-    print("-" * 50)
-    decoded = tokenizer.decode(encoded.ids)
-    print(f"Decoded text: {decoded}")
+    print(f"Decoded text: {tokenizer.decode(encoded.ids)}")
     print("-" * 50)
     print(f"Number of tokens: {len(encoded.tokens)}")
     print(f"Average tokens per word: {len(encoded.tokens) / len(text.split()):.2f}")
+    print("-" * 50)
+    
+    return encoded
 
 if __name__ == "__main__":
     # Test with various Swahili text samples
