@@ -1,6 +1,6 @@
 import sys
-from tokenizers import ByteLevelBPETokenizer
 from pathlib import Path
+from tokenizers import ByteLevelBPETokenizer
 
 # Set console to UTF-8 mode
 if sys.platform == 'win32':
@@ -9,9 +9,15 @@ if sys.platform == 'win32':
 def test_tokenizer(text: str):
     """Test the trained tokenizer with sample Swahili text."""
     # Load the trained tokenizer
+    model_path = Path("tokenizer/tokenizer.model")
+    vocab_path = Path("tokenizer/tokenizer.vocab")
+    
+    if not model_path.exists() or not vocab_path.exists():
+        raise FileNotFoundError("Tokenizer files not found! Please ensure both tokenizer.model and tokenizer.vocab exist.")
+    
     tokenizer = ByteLevelBPETokenizer(
-        "tokenizer/tokenizer.model",
-        "tokenizer/tokenizer.vocab",
+        str(model_path),
+        str(vocab_path)
     )
     
     # Add special tokens that were used during training
