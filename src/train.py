@@ -22,22 +22,21 @@ DRIVE_PATH = "/content/drive/MyDrive/msingi1"
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 25
-    batch_size: int = 8  # Increased for T4
+    num_epochs: int = 40
+    batch_size: int = 4
+    grad_accum_steps: int = 16
     learning_rate: float = 3e-4
-    warmup_steps: int = 1000
-    grad_acc_steps: int = 8  # Reduced since we increased batch size
-    save_steps: int = 500
-    eval_steps: int = 100
+    weight_decay: float = 0.1
     max_grad_norm: float = 1.0
-    early_stopping_patience: int = 3
-    checkpoint_dir: str = 'checkpoints'
-    fp16: bool = True  # Enable mixed precision
+    warmup_iters: int = 1000
+    lr_decay_iters: int = 20000
+    min_lr: float = 3e-5
+    eval_interval: int = 500
+    eval_iters: int = 100
+    save_interval: int = 1000
+    fp16: bool = True
     sequence_length: int = 1024
-    gradient_accumulation_steps: int = 1
-    weight_decay: float = 0.0
-    eval_every: int = 100
-    save_every: int = 500
+    checkpoint_dir: str = 'checkpoints'
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
@@ -170,7 +169,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     num_training_steps = len(train_loader) * training_config.num_epochs
     lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=training_config.warmup_steps,
+        num_warmup_steps=training_config.warmup_iters,
         num_training_steps=num_training_steps
     )
     
@@ -197,7 +196,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 # Compute loss with repetition penalty
                 loss = compute_loss_with_penalty(logits, labels)
-                loss = loss / training_config.gradient_accumulation_steps
+                loss = loss / training_config.grad_accum_steps
             
             # Backward pass with mixed precision
             if training_config.fp16 and torch.cuda.is_available():
@@ -205,7 +204,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             else:
                 loss.backward()
             
-            if (step + 1) % training_config.gradient_accumulation_steps == 0:
+            if (step + 1) % training_config.grad_accum_steps == 0:
                 if training_config.fp16 and torch.cuda.is_available():
                     scaler.unscale_(optimizer)
                     clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
@@ -219,7 +218,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 optimizer.zero_grad()
                 
                 # Save checkpoint
-                if (step + 1) % training_config.save_every == 0:
+                if (step + 1) % training_config.save_interval == 0:
                     checkpoint = {
                         'epoch': epoch,
                         'model_state_dict': model.state_dict(),
@@ -240,11 +239,11 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                             torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'best.pt'))
                         else:
                             patience_counter += 1
-                            if patience_counter >= training_config.early_stopping_patience:
+                            if patience_counter >= 3:
                                 print(f'Early stopping triggered after {epoch + 1} epochs')
                                 break
             
-            total_loss += loss.item() * training_config.gradient_accumulation_steps
+            total_loss += loss.item() * training_config.grad_accum_steps
             
             # Update progress bar
             progress_bar.set_postfix({
@@ -255,7 +254,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             global_step += 1
             
             # Evaluation
-            if val_texts and global_step % training_config.eval_every == 0:
+            if val_texts and global_step % training_config.eval_interval == 0:
                 val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
                 
                 if use_wandb:
@@ -434,22 +433,20 @@ if __name__ == "__main__":
     
     # Initialize training config
     training_config = TrainingConfig(
+        num_epochs=40,
+        batch_size=4,
+        grad_accum_steps=16,
         learning_rate=3e-4,
         weight_decay=0.1,
-        beta1=0.9,
-        beta2=0.95,
-        grad_clip=1.0,
+        max_grad_norm=1.0,
         warmup_iters=1000,
         lr_decay_iters=20000,
         min_lr=3e-5,
-        batch_size=4,
-        grad_acc_steps=16,  # Effective batch size = 64
-        max_iters=50000,
         eval_interval=500,
         eval_iters=100,
         save_interval=1000,
         fp16=True,
-        sequence_length=512,  # Shorter sequences for better memory usage
+        sequence_length=1024,
         checkpoint_dir='checkpoints'
     )
     
