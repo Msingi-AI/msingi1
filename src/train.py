@@ -106,13 +106,54 @@ def compute_loss_with_penalty(logits, labels, alpha=0.1):
     total_loss = ce_loss + alpha * rep_penalty
     return total_loss
 
+def verify_save(filepath: str) -> bool:
+    """Verify that a checkpoint was saved correctly by trying to load it."""
+    try:
+        checkpoint = torch.load(filepath)
+        return all(k in checkpoint for k in ['model_state_dict', 'optimizer_state_dict'])
+    except:
+        return False
+
+def safe_save_checkpoint(checkpoint: dict, filepath: str) -> bool:
+    """Safely save a checkpoint with verification."""
+    try:
+        # First save to a temporary file
+        temp_path = filepath + '.tmp'
+        torch.save(checkpoint, temp_path)
+        
+        # Verify the save was successful
+        if verify_save(temp_path):
+            # If verification passed, rename to final path
+            if os.path.exists(filepath):
+                os.remove(filepath)  # Remove old file if it exists
+            os.rename(temp_path, filepath)
+            return True
+        else:
+            # If verification failed, clean up temp file
+            os.remove(temp_path)
+            return False
+    except Exception as e:
+        print(f"\nError saving checkpoint to {filepath}: {str(e)}")
+        return False
+
 def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
          training_config: Optional[TrainingConfig] = None, tokenizer_path: str = "tokenizer/tokenizer.json"):
     if training_config is None:
         training_config = TrainingConfig()
     
     # Create checkpoint directory if it doesn't exist
-    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+    try:
+        os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+        print(f"\nCheckpoint directory created/verified at: {training_config.checkpoint_dir}")
+        
+        # Test write access
+        test_file = os.path.join(training_config.checkpoint_dir, 'test_write')
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+        print("Write access to checkpoint directory verified")
+    except Exception as e:
+        raise RuntimeError(f"Failed to create/access checkpoint directory: {str(e)}")
     
     # Set up device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -238,8 +279,11 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                     
                     # Save latest checkpoint
                     checkpoint_path = os.path.join(training_config.checkpoint_dir, f'checkpoint_epoch{epoch+1}_step{global_step+1}.pt')
-                    torch.save(checkpoint, checkpoint_path)
-                    print(f"\nSaved checkpoint to {checkpoint_path}")
+                    if safe_save_checkpoint(checkpoint, checkpoint_path):
+                        print(f"\nSuccessfully saved and verified checkpoint: {checkpoint_path}")
+                    else:
+                        print(f"\nWARNING: Failed to save checkpoint: {checkpoint_path}")
+                        print("Training will continue, but there might be issues with the checkpoint directory")
                     
                     # Save best model if validation improves
                     if val_texts:
@@ -249,8 +293,10 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                         if val_loss < best_val_loss:
                             best_val_loss = val_loss
                             best_model_path = os.path.join(training_config.checkpoint_dir, 'best_model.pt')
-                            torch.save(checkpoint, best_model_path)
-                            print(f"New best model saved to {best_model_path}")
+                            if safe_save_checkpoint(checkpoint, best_model_path):
+                                print(f"Successfully saved and verified best model: {best_model_path}")
+                            else:
+                                print(f"WARNING: Failed to save best model: {best_model_path}")
             
             total_loss += loss.item() * training_config.grad_accum_steps
             
@@ -280,7 +326,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         epoch_loss = total_loss / len(train_loader)
         print(f"\nEpoch {epoch+1}/{training_config.num_epochs} - Average Loss: {epoch_loss:.4f}")
     
-    # Save final model
+    # Save final model with verification
     final_checkpoint = {
         'epoch': training_config.num_epochs,
         'global_step': global_step,
@@ -295,8 +341,10 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         final_checkpoint['scaler_state_dict'] = scaler.state_dict()
     
     final_model_path = os.path.join(training_config.checkpoint_dir, 'final_model.pt')
-    torch.save(final_checkpoint, final_model_path)
-    print(f"\nTraining completed. Final model saved to {final_model_path}")
+    if safe_save_checkpoint(final_checkpoint, final_model_path):
+        print(f"\nTraining completed. Final model successfully saved and verified: {final_model_path}")
+    else:
+        print(f"\nWARNING: Failed to save final model: {final_model_path}")
 
 def evaluate(model, val_loader, config, device, fp16=False):
     """Evaluate the model on validation data with optional mixed precision."""
