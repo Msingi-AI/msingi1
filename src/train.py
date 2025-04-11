@@ -399,10 +399,15 @@ if __name__ == "__main__":
         print("\nListing contents of data directory:")
         for item in os.listdir('data'):
             print(f"  {item}")
+        
+        if os.path.exists('data/data'):
+            print("\nListing contents of data/data directory:")
+            for item in os.listdir('data/data'):
+                print(f"  {item}")
     
-    # Set up data paths
-    train_path = "data/train.txt"
-    val_path = "data/valid.txt"
+    # Set up data paths - data files are in data/data directory
+    train_path = "data/data/train.txt"
+    val_path = "data/data/valid.txt"
     
     # Check if files exist
     print(f"\nChecking data files:")
