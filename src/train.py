@@ -39,7 +39,7 @@ class TrainingConfig:
     save_interval: int = 1000
     fp16: bool = True
     sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
-    checkpoint_dir: str = 'checkpoints'
+    checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
@@ -422,7 +422,12 @@ if __name__ == "__main__":
         gradient_checkpointing=True
     )
     
-    # Initialize training config
+    # Create checkpoint directory in Google Drive
+    drive_checkpoint_dir = os.path.join(DRIVE_PATH, 'checkpoints')
+    os.makedirs(drive_checkpoint_dir, exist_ok=True)
+    print(f"\nSaving checkpoints to: {drive_checkpoint_dir}")
+    
+    # Initialize training config with Drive path
     training_config = TrainingConfig(
         num_epochs=10,
         batch_size=4,  # Using batch size 4
@@ -438,7 +443,7 @@ if __name__ == "__main__":
         save_interval=1000,
         fp16=True,
         sequence_length=1024,
-        checkpoint_dir='checkpoints'
+        checkpoint_dir=drive_checkpoint_dir  # Use Drive path
     )
     
     # Create checkpoint directory
