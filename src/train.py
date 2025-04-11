@@ -1,20 +1,21 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
-from transformers import PreTrainedTokenizerFast
-from model import Msingi1, MsingiConfig
-from data_processor import extract_dataset
-from tqdm import tqdm
-import wandb
 import os
+import sys
+import torch
+import wandb
+from model import MsingiConfig, Msingi1
+from data_processor import load_dataset, prepare_dataset
+from torch.utils.data import Dataset, DataLoader
+from torch.nn import functional as F
+from torch.cuda.amp import GradScaler, autocast
+from transformers import PreTrainedTokenizerFast
+from tqdm import tqdm
 from pathlib import Path
 import math
 from typing import Optional, List
 import numpy as np
 from tokenizers import Tokenizer
-from torch.cuda.amp import autocast
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
-import torch.nn.functional as F
 
 @dataclass
 class TrainingConfig:
@@ -110,7 +111,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
     
     # Initialize mixed precision training
-    scaler = torch.amp.GradScaler('cuda') if training_config.fp16 and torch.cuda.is_available() else None
+    scaler = GradScaler('cuda') if training_config.fp16 and torch.cuda.is_available() else None
     # Initialize wandb
     use_wandb = True
     if use_wandb:
@@ -385,47 +386,46 @@ def prepare_dataset(texts: List[str]) -> List[str]:
     return cleaned_texts
 
 if __name__ == "__main__":
-    # Load dataset
+    # Load datasets
     train_path = "data/Swahili data/Swahili data/train.txt"
     val_path = "data/Swahili data/Swahili data/valid.txt"
     
-    print("Loading training data...")
-    with open(train_path, 'r', encoding='utf-8') as f:
-        train_texts = f.readlines()
+    print("Loading and preparing training data...")
+    train_texts = load_dataset(train_path)
+    train_texts = prepare_dataset(train_texts)
     
-    print("Loading validation data...")
-    with open(val_path, 'r', encoding='utf-8') as f:
-        val_texts = f.readlines()
-    
-    # Clean the texts
-    train_texts = [text.strip() for text in train_texts if text.strip()]
-    val_texts = [text.strip() for text in val_texts if text.strip()]
+    print("Loading and preparing validation data...")
+    val_texts = load_dataset(val_path)
+    val_texts = prepare_dataset(val_texts)
     
     print(f"Loaded {len(train_texts)} training samples and {len(val_texts)} validation samples")
     
-    # Initialize model config with smaller architecture
+    # Initialize model config with smaller architecture for testing
     model_config = MsingiConfig(
+        n_layer=12,
+        n_head=12,
+        n_embd=768,
         vocab_size=50000,
-        max_position_embeddings=1024,
-        hidden_size=384,
-        num_hidden_layers=6,
-        num_attention_heads=6,
-        intermediate_size=1536,
-        gradient_checkpointing=True
+        block_size=2048,
+        dropout=0.1
     )
     
     # Initialize training config
     training_config = TrainingConfig(
-        batch_size=8,
-        gradient_accumulation_steps=8,  # Effective batch size = 64
-        learning_rate=2e-4,  # Slightly lower learning rate
-        num_epochs=40,  # More epochs with early stopping
-        warmup_steps=1000,  # More warmup steps
-        max_grad_norm=0.5,  # Lower grad norm for stability
-        weight_decay=0.01,  # L2 regularization
-        early_stopping_patience=5,  # More patience
-        eval_every=500,  # More frequent evaluation
-        save_every=1000,
+        learning_rate=3e-4,
+        weight_decay=0.1,
+        beta1=0.9,
+        beta2=0.95,
+        grad_clip=1.0,
+        warmup_iters=1000,
+        lr_decay_iters=20000,
+        min_lr=3e-5,
+        batch_size=4,
+        grad_acc_steps=16,  # Effective batch size = 64
+        max_iters=50000,
+        eval_interval=500,
+        eval_iters=100,
+        save_interval=1000,
         fp16=True,
         sequence_length=512,  # Shorter sequences for better memory usage
         checkpoint_dir='checkpoints'
