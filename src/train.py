@@ -22,7 +22,7 @@ DRIVE_PATH = "/content/drive/MyDrive/msingi1"
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 40
+    num_epochs: int = 15  # Set to 15 epochs for better convergence
     batch_size: int = 4
     grad_accum_steps: int = 16
     learning_rate: float = 3e-4
