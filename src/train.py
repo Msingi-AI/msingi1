@@ -26,8 +26,8 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 @dataclass
 class TrainingConfig:
     num_epochs: int = 10  # Default 10 epochs
-    batch_size: int = 2   # Reduced batch size for better memory efficiency
-    grad_accum_steps: int = 32  # Increased accumulation to maintain effective batch size
+    batch_size: int = 4   # Using batch size 4
+    grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
     learning_rate: float = 3e-4
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
@@ -38,7 +38,7 @@ class TrainingConfig:
     eval_iters: int = 100
     save_interval: int = 1000
     fp16: bool = True
-    sequence_length: int = 1024  # Reduced sequence length for better memory efficiency
+    sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
     checkpoint_dir: str = 'checkpoints'
 
 class SwahiliDataset(Dataset):
@@ -425,8 +425,8 @@ if __name__ == "__main__":
     # Initialize training config
     training_config = TrainingConfig(
         num_epochs=10,
-        batch_size=2,  # Reduced batch size for better memory efficiency
-        grad_accum_steps=32,  # Increased accumulation to maintain effective batch size
+        batch_size=4,  # Using batch size 4
+        grad_accum_steps=16,  # Adjusted accumulation steps
         learning_rate=3e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
@@ -437,7 +437,7 @@ if __name__ == "__main__":
         eval_iters=100,
         save_interval=1000,
         fp16=True,
-        sequence_length=1024,  # Reduced sequence length for better memory efficiency
+        sequence_length=1024,
         checkpoint_dir='checkpoints'
     )
     
