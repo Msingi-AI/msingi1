@@ -389,11 +389,27 @@ def prepare_dataset(texts: List[str]) -> List[str]:
     return cleaned_texts
 
 if __name__ == "__main__":
-    # Set up data paths - use local data directory where files are copied to
+    # Print current directory and list contents
+    print(f"Current working directory: {os.getcwd()}")
+    print("\nListing contents of current directory:")
+    for item in os.listdir('.'):
+        print(f"  {item}")
+    
+    if os.path.exists('data'):
+        print("\nListing contents of data directory:")
+        for item in os.listdir('data'):
+            print(f"  {item}")
+    
+    # Set up data paths
     train_path = "data/train.txt"
     val_path = "data/valid.txt"
     
-    print("Loading and preparing training data...")
+    # Check if files exist
+    print(f"\nChecking data files:")
+    print(f"train.txt exists: {os.path.exists(train_path)}")
+    print(f"valid.txt exists: {os.path.exists(val_path)}")
+    
+    print("\nLoading and preparing training data...")
     train_texts = load_dataset(train_path)
     train_texts = prepare_dataset(train_texts)
     
