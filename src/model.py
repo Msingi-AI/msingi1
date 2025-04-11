@@ -154,39 +154,41 @@ class Msingi1(nn.Module):
         # Tie weights
         self.lm_head.weight = self.embeddings.weight
         
-    def _init_weights(self, module):
-        if isinstance(module, nn.Linear):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-            
-    def forward(self, input_ids, attention_mask=None):
-        batch_size, seq_length = input_ids.shape
+        # Gradient checkpointing flag
+        self.gradient_checkpointing = False
+    
+    def gradient_checkpointing_enable(self):
+        self.gradient_checkpointing = True
+    
+    def gradient_checkpointing_disable(self):
+        self.gradient_checkpointing = False
         
+    def forward(self, input_ids, attention_mask=None):
         hidden_states = self.embeddings(input_ids)
         
+        # Move freqs_cis to the same device as hidden states
         freqs_cis = self.freqs_cis.to(hidden_states.device)
         
-        if attention_mask is not None:
-            attention_mask = (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -10000.0
-            
-        for layer in self.layers:
-            if self.config.gradient_checkpointing and self.training:
+        # Process through transformer layers with optional gradient checkpointing
+        if self.gradient_checkpointing and self.training:
+            def create_custom_forward(module):
+                def custom_forward(*inputs):
+                    return module(*inputs)
+                return custom_forward
+
+            for layer in self.layers:
                 hidden_states = torch.utils.checkpoint.checkpoint(
-                    layer, hidden_states, freqs_cis, attention_mask
+                    create_custom_forward(layer),
+                    hidden_states, freqs_cis, attention_mask
                 )
-            else:
+        else:
+            for layer in self.layers:
                 hidden_states = layer(hidden_states, freqs_cis, attention_mask)
-            
-        hidden_states = self.ln_f(hidden_states)
-        lm_logits = self.lm_head(hidden_states)
         
-        return lm_logits
+        hidden_states = self.ln_f(hidden_states)
+        logits = self.lm_head(hidden_states)
+        
+        return logits
     
     @torch.no_grad()
     def generate(
@@ -228,3 +230,14 @@ class Msingi1(nn.Module):
             input_ids = torch.cat([input_ids, next_token], dim=1)
             
         return input_ids
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
