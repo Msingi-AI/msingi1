@@ -395,8 +395,17 @@ if __name__ == "__main__":
     for item in os.listdir('.'):
         print(f"  {item}")
     
-    # Set up data paths - data files are in data/Swahili data directory
-    data_dir = "data/Swahili data"
+    if os.path.exists('data'):
+        print("\nListing contents of data directory:")
+        for item in os.listdir('data'):
+            print(f"  {item}")
+            if os.path.isdir(os.path.join('data', item)):
+                print(f"\nListing contents of data/{item}:")
+                for subitem in os.listdir(os.path.join('data', item)):
+                    print(f"    {subitem}")
+    
+    # Set up data paths
+    data_dir = "data"
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
     
