@@ -17,6 +17,11 @@ from tokenizers import Tokenizer
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
 
+# Base directories
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
+TOKENIZER_DIR = os.path.join(ROOT_DIR, "tokenizer")
+
 # Colab Drive path
 DRIVE_PATH = "/content/drive/MyDrive/msingi1"
 
@@ -39,7 +44,7 @@ class TrainingConfig:
     save_interval: int = 1000
     fp16: bool = True
     sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
-    checkpoint_dir: str = 'checkpoints'
+    checkpoint_dir: str = CHECKPOINT_DIR  # Use absolute path
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
@@ -106,6 +111,9 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if training_config is None:
         training_config = TrainingConfig()
     
+    # Create checkpoint directory if it doesn't exist
+    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+    
     # Set up device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -170,14 +178,18 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     
     # Training loop
     global_step = 0
+    total_steps = len(train_loader) * training_config.num_epochs
+    best_val_loss = float('inf')
+    
     for epoch in range(start_epoch, training_config.num_epochs):
         model.train()
         total_loss = 0
         optimizer.zero_grad()
         
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_config.num_epochs}")
+        progress_bar = tqdm(enumerate(train_loader), total=len(train_loader))
+        progress_bar.set_description(f"Epoch {epoch+1}/{training_config.num_epochs}")
         
-        for step, batch in enumerate(progress_bar):
+        for step, batch in progress_bar:
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
@@ -208,46 +220,45 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 lr_scheduler.step()
                 optimizer.zero_grad()
                 
-                # Save checkpoint
-                if (step + 1) % training_config.save_interval == 0:
+                # Save checkpoint every save_interval steps and at the end of each epoch
+                if (global_step + 1) % training_config.save_interval == 0 or (step == len(train_loader) - 1):
                     checkpoint = {
                         'epoch': epoch,
+                        'global_step': global_step,
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
+                        'scheduler_state_dict': lr_scheduler.state_dict(),
+                        'loss': loss.item(),
                         'best_val_loss': best_val_loss,
-                        'config': model_config,
+                        'config': model_config.__dict__,
                     }
+                    
                     if scaler is not None:
                         checkpoint['scaler_state_dict'] = scaler.state_dict()
                     
-                    torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'latest.pt'))
+                    # Save latest checkpoint
+                    checkpoint_path = os.path.join(training_config.checkpoint_dir, f'checkpoint_epoch{epoch+1}_step{global_step+1}.pt')
+                    torch.save(checkpoint, checkpoint_path)
+                    print(f"\nSaved checkpoint to {checkpoint_path}")
                     
+                    # Save best model if validation improves
                     if val_texts:
                         val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
-                        
-                        if use_wandb:
-                            wandb.log({
-                                'val_loss': val_loss,
-                                'epoch': epoch,
-                                'global_step': global_step,
-                            })
+                        print(f"Validation loss: {val_loss:.4f}")
                         
                         if val_loss < best_val_loss:
                             best_val_loss = val_loss
-                            patience_counter = 0
-                            torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'best.pt'))
-                        else:
-                            patience_counter += 1
-                            if patience_counter >= 3:
-                                print(f'Early stopping triggered after {epoch + 1} epochs')
-                                break
+                            best_model_path = os.path.join(training_config.checkpoint_dir, 'best_model.pt')
+                            torch.save(checkpoint, best_model_path)
+                            print(f"New best model saved to {best_model_path}")
             
             total_loss += loss.item() * training_config.grad_accum_steps
             
             # Update progress bar
             progress_bar.set_postfix({
-                'loss': total_loss / (step + 1),
+                'loss': loss.item() * training_config.grad_accum_steps,
                 'lr': optimizer.param_groups[0]['lr'],
+                'step': f"{global_step}/{total_steps}"
             })
             global_step += 1
             
@@ -265,16 +276,27 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 model.train()  # Back to training mode
         
-        # Log epoch metrics
-        avg_loss = total_loss / len(train_loader)
-        if use_wandb:
-            wandb.log({
-                'train_loss': avg_loss,
-                'epoch': epoch,
-                'global_step': global_step,
-            })
-        
-        print(f"Epoch {epoch+1}/{training_config.num_epochs} - Average Loss: {avg_loss:.4f}")
+        # Save epoch average loss
+        epoch_loss = total_loss / len(train_loader)
+        print(f"\nEpoch {epoch+1}/{training_config.num_epochs} - Average Loss: {epoch_loss:.4f}")
+    
+    # Save final model
+    final_checkpoint = {
+        'epoch': training_config.num_epochs,
+        'global_step': global_step,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': lr_scheduler.state_dict(),
+        'loss': epoch_loss,
+        'best_val_loss': best_val_loss,
+        'config': model_config.__dict__,
+    }
+    if scaler is not None:
+        final_checkpoint['scaler_state_dict'] = scaler.state_dict()
+    
+    final_model_path = os.path.join(training_config.checkpoint_dir, 'final_model.pt')
+    torch.save(final_checkpoint, final_model_path)
+    print(f"\nTraining completed. Final model saved to {final_model_path}")
 
 def evaluate(model, val_loader, config, device, fp16=False):
     """Evaluate the model on validation data with optional mixed precision."""
@@ -373,14 +395,19 @@ def prepare_dataset(texts: List[str]) -> List[str]:
 if __name__ == "__main__":
     # Print current directory and list contents
     print(f"Current working directory: {os.getcwd()}")
+    print(f"Models will be saved to: {CHECKPOINT_DIR}")
+    
+    # Create necessary directories
+    os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+    os.makedirs(TOKENIZER_DIR, exist_ok=True)
     
     # Set up data paths - files are in data/data/Swahili data/Swahili data/
-    data_dir = os.path.join("data", "data", "Swahili data", "Swahili data")
+    data_dir = os.path.join(ROOT_DIR, "data", "data", "Swahili data", "Swahili data")
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
     
     # Set up tokenizer path
-    tokenizer_path = os.path.join("data", "tokenizer", "tokenizer.json")
+    tokenizer_path = os.path.join(TOKENIZER_DIR, "tokenizer.json")
     
     # Check if directory and files exist
     print(f"\nChecking paths:")
@@ -422,7 +449,7 @@ if __name__ == "__main__":
         gradient_checkpointing=True
     )
     
-    # Initialize training config
+    # Initialize training config with absolute checkpoint path
     training_config = TrainingConfig(
         num_epochs=10,
         batch_size=4,  # Using batch size 4
@@ -438,11 +465,8 @@ if __name__ == "__main__":
         save_interval=1000,
         fp16=True,
         sequence_length=1024,
-        checkpoint_dir='checkpoints'
+        checkpoint_dir=CHECKPOINT_DIR  # Use absolute path
     )
-    
-    # Create checkpoint directory
-    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
     
     # Train model
     train(model_config=model_config,
