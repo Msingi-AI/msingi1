@@ -386,19 +386,22 @@ def prepare_dataset(texts: List[str]) -> List[str]:
 
 if __name__ == "__main__":
     # Load dataset
-    texts = extract_dataset("archive.zip")
+    train_path = "data/Swahili data/Swahili data/train.txt"
+    val_path = "data/Swahili data/Swahili data/valid.txt"
     
-    # Clean and prepare texts
-    texts = prepare_dataset(texts)
-    print(f"Cleaned dataset size: {len(texts)} texts")
+    print("Loading training data...")
+    with open(train_path, 'r', encoding='utf-8') as f:
+        train_texts = f.readlines()
     
-    # Split into train/val
-    train_size = int(0.9 * len(texts))
-    train_texts = texts[:train_size]
-    val_texts = texts[train_size:]
+    print("Loading validation data...")
+    with open(val_path, 'r', encoding='utf-8') as f:
+        val_texts = f.readlines()
     
-    print(f'Train samples: {len(train_texts)}')
-    print(f'Validation samples: {len(val_texts)}')
+    # Clean the texts
+    train_texts = [text.strip() for text in train_texts if text.strip()]
+    val_texts = [text.strip() for text in val_texts if text.strip()]
+    
+    print(f"Loaded {len(train_texts)} training samples and {len(val_texts)} validation samples")
     
     # Initialize model config with smaller architecture
     model_config = MsingiConfig(

@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Optional
 import re
 import time
-import zipfile
 
 def clean_text(text: str) -> str:
     """Clean and normalize text."""
@@ -582,61 +581,27 @@ def scrape_swahili_news(max_articles: int = 1000, force_fresh: bool = False) -> 
     
     return all_texts
 
-def extract_dataset(archive_path: str, extract_dir: str = "data") -> List[str]:
-    """
-    Extract the dataset from zip file and return list of text content.
-    
-    Args:
-        archive_path: Path to the archive.zip file
-        extract_dir: Directory to extract files to
-    
-    Returns:
-        List of text content from the dataset
-    """
-    # Create extraction directory if it doesn't exist
-    os.makedirs(extract_dir, exist_ok=True)
-    
-    texts = []
-    
-    # Extract the zip file
-    with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-        zip_ref.extractall(extract_dir)
-        
-        # Process each file in the archive
-        for file_name in zip_ref.namelist():
-            if file_name.endswith('.txt'):
-                # Read text files directly from zip
-                with zip_ref.open(file_name) as f:
-                    content = f.read().decode('utf-8', errors='ignore')
-                    texts.append(content)
-            elif file_name.endswith('.json'):
-                # Parse JSON files
-                with zip_ref.open(file_name) as f:
-                    content = json.loads(f.read().decode('utf-8', errors='ignore'))
-                    # If the JSON contains a 'text' field, extract it
-                    if isinstance(content, dict) and 'text' in content:
-                        texts.append(content['text'])
-                    elif isinstance(content, list):
-                        # If it's a list of documents, extract text from each
-                        for item in content:
-                            if isinstance(item, dict) and 'text' in item:
-                                texts.append(item['text'])
-    
-    # Remove empty strings and strip whitespace
+def load_dataset(file_path: str) -> List[str]:
+    """Load dataset from a text file."""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        texts = f.readlines()
+    return [text.strip() for text in texts if text.strip()]
+
+def prepare_dataset(texts: List[str]) -> List[str]:
+    """Clean and prepare the dataset."""
+    # Remove empty lines and strip whitespace
     texts = [text.strip() for text in texts if text.strip()]
     
-    print(f"Loaded {len(texts)} text samples from the dataset")
-    return texts
-
-def combine_datasets(swahili_texts: List[str], archive_texts: List[str]) -> List[str]:
-    """
-    Combine texts from multiple sources and remove duplicates.
-    """
-    all_texts = swahili_texts + archive_texts
-    # Remove duplicates while preserving order
-    unique_texts = list(dict.fromkeys(all_texts))
-    print(f"Combined dataset size: {len(unique_texts)} documents")
-    return unique_texts
+    # Basic cleaning
+    cleaned_texts = []
+    for text in texts:
+        # Remove multiple spaces
+        text = ' '.join(text.split())
+        # Add to cleaned texts if not empty
+        if text:
+            cleaned_texts.append(text)
+    
+    return cleaned_texts
 
 def get_dataset_stats(texts: List[str]) -> Dict:
     """
@@ -678,21 +643,23 @@ def get_word_stats(texts):
     }
 
 if __name__ == "__main__":
-    # Load both datasets
-    swahili_texts = load_swahili_dataset()
-    archive_texts = extract_dataset("archive.zip")
+    # Load dataset
+    dataset_file = "dataset.txt"
+    dataset_texts = load_dataset(dataset_file)
+    print(f"Loaded {len(dataset_texts)} samples from dataset")
     
-    # Combine datasets
-    all_texts = combine_datasets(swahili_texts, archive_texts)
+    # Prepare dataset
+    prepared_texts = prepare_dataset(dataset_texts)
+    print(f"Prepared {len(prepared_texts)} samples")
     
     # Get and print statistics
-    stats = get_dataset_stats(all_texts)
+    stats = get_dataset_stats(prepared_texts)
     print("\nDataset Statistics:")
     for key, value in stats.items():
         print(f"{key}: {value:.2f}" if isinstance(value, float) else f"{key}: {value}")
         
     # Print sample texts
     print("\nSample texts:")
-    for i, text in enumerate(all_texts[:3]):
+    for i, text in enumerate(prepared_texts[:3]):
         print(f"\nSample {i+1}:")
         print(text[:200] + "...")
