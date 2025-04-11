@@ -391,18 +391,21 @@ def prepare_dataset(texts: List[str]) -> List[str]:
 if __name__ == "__main__":
     # Print current directory and list contents
     print(f"Current working directory: {os.getcwd()}")
+    print("\nListing contents of current directory:")
+    for item in os.listdir('.'):
+        print(f"  {item}")
     
-    # Set up data paths - read directly from Google Drive
-    drive_dir = "/content/drive/MyDrive/msingi1/data"
-    train_path = os.path.join(drive_dir, "train.txt")
-    val_path = os.path.join(drive_dir, "valid.txt")
+    # Set up data paths - data files are in data/Swahili data directory
+    data_dir = "data/Swahili data"
+    train_path = os.path.join(data_dir, "train.txt")
+    val_path = os.path.join(data_dir, "valid.txt")
     
     # Check if directory and files exist
     print(f"\nChecking paths:")
-    print(f"Drive directory exists: {os.path.exists(drive_dir)}")
-    if os.path.exists(drive_dir):
-        print("\nListing contents of drive directory:")
-        for item in os.listdir(drive_dir):
+    print(f"Data directory exists: {os.path.exists(data_dir)}")
+    if os.path.exists(data_dir):
+        print("\nListing contents of data directory:")
+        for item in os.listdir(data_dir):
             print(f"  {item}")
     
     print(f"\nChecking data files:")
@@ -419,14 +422,17 @@ if __name__ == "__main__":
     
     print(f"Loaded {len(train_texts)} training samples and {len(val_texts)} validation samples")
     
-    # Initialize model config with smaller architecture for testing
+    # Initialize model config with target architecture
     model_config = MsingiConfig(
-        n_layer=12,
-        n_head=12,
-        n_embd=768,
         vocab_size=50000,
-        block_size=2048,
-        dropout=0.1
+        max_position_embeddings=2048,
+        hidden_size=768,
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
+        hidden_dropout_prob=0.1,
+        attention_probs_dropout_prob=0.1,
+        gradient_checkpointing=True
     )
     
     # Initialize training config
