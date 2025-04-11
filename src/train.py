@@ -389,9 +389,9 @@ def prepare_dataset(texts: List[str]) -> List[str]:
     return cleaned_texts
 
 if __name__ == "__main__":
-    # Set up data paths
-    train_path = os.path.join(DRIVE_PATH, "data/train.txt")
-    val_path = os.path.join(DRIVE_PATH, "data/valid.txt")
+    # Set up data paths - use local data directory where files are copied to
+    train_path = "data/train.txt"
+    val_path = "data/valid.txt"
     
     print("Loading and preparing training data...")
     train_texts = load_dataset(train_path)
