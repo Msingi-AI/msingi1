@@ -103,58 +103,42 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if training_config is None:
         training_config = TrainingConfig()
     
-    # Create checkpoint directory
-    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+    # Set up device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     
-    # Setup device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if torch.cuda.is_available():
-        print(f'Using GPU: {torch.cuda.get_device_name(0)}')
-        print(f'GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f}GB')
+    # Initialize model
+    model = Msingi1(model_config)
+    model.to(device)
+    
+    # Set up optimizer
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=training_config.learning_rate,
+        weight_decay=training_config.weight_decay
+    )
     
     # Initialize mixed precision training
-    scaler = GradScaler('cuda') if training_config.fp16 and torch.cuda.is_available() else None
-    # Initialize wandb
-    use_wandb = True
-    if use_wandb:
-        wandb.init(
-            project="msingi1",
-            config={
-                "architecture": {
-                    "hidden_size": model_config.hidden_size,
-                    "num_layers": model_config.num_hidden_layers,
-                    "num_heads": model_config.num_attention_heads,
-                    "vocab_size": model_config.vocab_size
-                },
-                "training": vars(training_config),
-                "dataset": {
-                    "num_samples": len(train_texts),
-                    "sequence_length": training_config.sequence_length
-                }
-            }
-        )
+    scaler = None
+    if training_config.fp16 and torch.cuda.is_available():
+        print("Using mixed precision training")
+        from torch.cuda.amp import GradScaler
+        scaler = GradScaler()
     
-    # Create checkpoint directory
-    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
-
-    # Initialize model and move to device
-    model = Msingi1(model_config)
-    model = model.to(device)
-    
-    # Initialize optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=training_config.learning_rate, weight_decay=training_config.weight_decay)
-    
-    # Load checkpoint if exists
+    # Load checkpoint if it exists
     start_epoch = 0
-    if os.path.exists(os.path.join(training_config.checkpoint_dir, 'latest.pt')):
-        checkpoint = torch.load(os.path.join(training_config.checkpoint_dir, 'latest.pt'))
+    best_val_loss = float('inf')
+    patience_counter = 0
+    checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
+    if os.path.exists(checkpoint_path):
+        print(f'Loading checkpoint from {checkpoint_path}')
+        checkpoint = torch.load(checkpoint_path)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if 'scheduler_state_dict' in checkpoint:
-            lr_scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        if 'scaler_state_dict' in checkpoint and scaler:
-            scaler.load_state_dict(checkpoint['scaler_state_dict'])
         start_epoch = checkpoint['epoch']
+        best_val_loss = checkpoint.get('best_val_loss', float('inf'))
+        if scaler and 'scaler_state_dict' in checkpoint:
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
         print(f'Resuming from epoch {start_epoch}')
     
     # Create datasets
@@ -173,11 +157,13 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         num_training_steps=num_training_steps
     )
     
+    # Initialize wandb if available
+    use_wandb = 'wandb' in sys.modules
+    if use_wandb:
+        wandb.init(project="msingi1", config=vars(training_config))
+    
     # Training loop
     global_step = 0
-    best_val_loss = float('inf')
-    patience_counter = 0
-    
     for epoch in range(start_epoch, training_config.num_epochs):
         model.train()
         total_loss = 0
@@ -198,13 +184,13 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 loss = loss / training_config.grad_accum_steps
             
             # Backward pass with mixed precision
-            if training_config.fp16 and torch.cuda.is_available():
+            if scaler is not None:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
             
             if (step + 1) % training_config.grad_accum_steps == 0:
-                if training_config.fp16 and torch.cuda.is_available():
+                if scaler is not None:
                     scaler.unscale_(optimizer)
                     clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
                     scaler.step(optimizer)
@@ -222,16 +208,24 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                         'epoch': epoch,
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict(),
-                        'scheduler_state_dict': lr_scheduler.state_dict(),
-                        'scaler_state_dict': scaler.state_dict() if scaler else None,
-                        'loss': loss.item(),
-                        'best_val_loss': best_val_loss
+                        'best_val_loss': best_val_loss,
+                        'config': model_config,
                     }
+                    if scaler is not None:
+                        checkpoint['scaler_state_dict'] = scaler.state_dict()
+                    
                     torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'latest.pt'))
                     
-                    # Early stopping check
                     if val_texts:
                         val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                        
+                        if use_wandb:
+                            wandb.log({
+                                'val_loss': val_loss,
+                                'epoch': epoch,
+                                'global_step': global_step,
+                            })
+                        
                         if val_loss < best_val_loss:
                             best_val_loss = val_loss
                             patience_counter = 0
@@ -246,10 +240,9 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             
             # Update progress bar
             progress_bar.set_postfix({
-                "loss": f"{total_loss/(step+1):.4f}",
-                "lr": f"{lr_scheduler.get_last_lr()[0]:.2e}",
+                'loss': total_loss / (step + 1),
+                'lr': optimizer.param_groups[0]['lr'],
             })
-            
             global_step += 1
             
             # Evaluation
@@ -258,45 +251,30 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 if use_wandb:
                     wandb.log({
-                        "train_loss": total_loss / (step + 1),
-                        "val_loss": val_loss,
-                        "learning_rate": lr_scheduler.get_last_lr()[0],
-                    }, step=global_step)
-                
-                if val_loss < best_val_loss:
-                    best_val_loss = val_loss
-                    model_path = os.path.join(training_config.checkpoint_dir, "best_model.pt")
-                    torch.save({
+                        'val_loss': val_loss,
+                        'train_loss': total_loss / (step + 1),
                         'epoch': epoch,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'scheduler_state_dict': lr_scheduler.state_dict(),
-                        'scaler_state_dict': scaler.state_dict() if scaler else None,
-                        'loss': val_loss,
-                        'best_val_loss': best_val_loss
-                    }, model_path)
-            
-            lr_scheduler.step()
-    
-    # Save final model
-    model_path = os.path.join(training_config.checkpoint_dir, "final_model.pt")
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'scheduler_state_dict': lr_scheduler.state_dict(),
-        'scaler_state_dict': scaler.state_dict() if scaler else None,
-        'loss': loss.item(),
-        'best_val_loss': best_val_loss
-    }, model_path)
-    
-    if use_wandb:
-        wandb.finish()
+                        'global_step': global_step,
+                    })
+                
+                model.train()  # Back to training mode
+        
+        # Log epoch metrics
+        avg_loss = total_loss / len(train_loader)
+        if use_wandb:
+            wandb.log({
+                'train_loss': avg_loss,
+                'epoch': epoch,
+                'global_step': global_step,
+            })
+        
+        print(f"Epoch {epoch+1}/{training_config.num_epochs} - Average Loss: {avg_loss:.4f}")
 
 def evaluate(model, val_loader, config, device, fp16=False):
     """Evaluate the model on validation data with optional mixed precision."""
     model.eval()
     total_loss = 0
+    total_tokens = 0
     
     with torch.no_grad():
         for batch in val_loader:
@@ -312,9 +290,10 @@ def evaluate(model, val_loader, config, device, fp16=False):
                     ignore_index=-100
                 )
             
-            total_loss += loss.item()
+            total_loss += loss.item() * labels.ne(-100).sum().item()
+            total_tokens += labels.ne(-100).sum().item()
     
-    return total_loss / len(val_loader)
+    return total_loss / total_tokens if total_tokens > 0 else float('inf')
 
 def get_cosine_schedule_with_warmup(
     optimizer,
