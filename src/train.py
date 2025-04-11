@@ -391,21 +391,9 @@ def prepare_dataset(texts: List[str]) -> List[str]:
 if __name__ == "__main__":
     # Print current directory and list contents
     print(f"Current working directory: {os.getcwd()}")
-    print("\nListing contents of current directory:")
-    for item in os.listdir('.'):
-        print(f"  {item}")
     
-    if os.path.exists('data'):
-        print("\nListing contents of data directory:")
-        for item in os.listdir('data'):
-            print(f"  {item}")
-            if os.path.isdir(os.path.join('data', item)):
-                print(f"\nListing contents of data/{item}:")
-                for subitem in os.listdir(os.path.join('data', item)):
-                    print(f"    {subitem}")
-    
-    # Set up data paths
-    data_dir = "data"
+    # Set up data paths - files are in data/data/Swahili data/Swahili data/
+    data_dir = os.path.join("data", "data", "Swahili data", "Swahili data")
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
     
