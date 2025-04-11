@@ -20,11 +20,14 @@ from dataclasses import dataclass
 # Colab Drive path
 DRIVE_PATH = "/content/drive/MyDrive/msingi1"
 
+# Set PyTorch memory allocation config
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 @dataclass
 class TrainingConfig:
     num_epochs: int = 10  # Default 10 epochs
-    batch_size: int = 8   # Increased batch size for T4 GPU
-    grad_accum_steps: int = 8  # Reduced to maintain same effective batch size (8*8=64)
+    batch_size: int = 2   # Reduced batch size for better memory efficiency
+    grad_accum_steps: int = 32  # Increased accumulation to maintain effective batch size
     learning_rate: float = 3e-4
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
@@ -35,7 +38,7 @@ class TrainingConfig:
     eval_iters: int = 100
     save_interval: int = 1000
     fp16: bool = True
-    sequence_length: int = 2048
+    sequence_length: int = 1024  # Reduced sequence length for better memory efficiency
     checkpoint_dir: str = 'checkpoints'
 
 class SwahiliDataset(Dataset):
@@ -110,6 +113,9 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     # Initialize model
     model = Msingi1(model_config)
     model.to(device)
+    
+    # Enable gradient checkpointing
+    model.gradient_checkpointing_enable()
     
     # Set up optimizer
     optimizer = torch.optim.AdamW(
@@ -419,8 +425,8 @@ if __name__ == "__main__":
     # Initialize training config
     training_config = TrainingConfig(
         num_epochs=10,
-        batch_size=8,  # Increased batch size
-        grad_accum_steps=8,  # Reduced to maintain same effective batch size
+        batch_size=2,  # Reduced batch size for better memory efficiency
+        grad_accum_steps=32,  # Increased accumulation to maintain effective batch size
         learning_rate=3e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
@@ -431,7 +437,7 @@ if __name__ == "__main__":
         eval_iters=100,
         save_interval=1000,
         fp16=True,
-        sequence_length=2048,
+        sequence_length=1024,  # Reduced sequence length for better memory efficiency
         checkpoint_dir='checkpoints'
     )
     
