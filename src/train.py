@@ -406,8 +406,8 @@ if __name__ == "__main__":
                 print(f"  {item}")
     
     # Set up data paths - data files are in data/data directory
-    train_path = "content/MyDrive/data/train.txt"
-    val_path = "content/MyDrive/data/valid.txt"
+    train_path = "content/MyDrive/msingi1/data/train.txt"
+    val_path = "content/MyDrive/msingi1/data/valid.txt"
     
     # Check if files exist
     print(f"\nChecking data files:")
