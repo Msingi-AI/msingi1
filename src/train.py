@@ -391,21 +391,18 @@ def prepare_dataset(texts: List[str]) -> List[str]:
 if __name__ == "__main__":
     # Print current directory and list contents
     print(f"Current working directory: {os.getcwd()}")
-    print("\nListing contents of current directory:")
-    for item in os.listdir('.'):
-        print(f"  {item}")
     
-    # Set up data paths - data files are in data/Swahili data directory
-    data_dir = "data/Swahili data"
-    train_path = os.path.join(data_dir, "train.txt")
-    val_path = os.path.join(data_dir, "valid.txt")
+    # Set up data paths - read directly from Google Drive
+    drive_dir = "/content/drive/MyDrive/msingi1/data"
+    train_path = os.path.join(drive_dir, "train.txt")
+    val_path = os.path.join(drive_dir, "valid.txt")
     
     # Check if directory and files exist
     print(f"\nChecking paths:")
-    print(f"Data directory exists: {os.path.exists(data_dir)}")
-    if os.path.exists(data_dir):
-        print("\nListing contents of data directory:")
-        for item in os.listdir(data_dir):
+    print(f"Drive directory exists: {os.path.exists(drive_dir)}")
+    if os.path.exists(drive_dir):
+        print("\nListing contents of drive directory:")
+        for item in os.listdir(drive_dir):
             print(f"  {item}")
     
     print(f"\nChecking data files:")
