@@ -395,8 +395,8 @@ if __name__ == "__main__":
     for item in os.listdir('.'):
         print(f"  {item}")
     
-    # Set up data paths - data files are in data/data/Swahili data directory
-    data_dir = "data/data/Swahili data"
+    # Set up data paths - data files are in data/Swahili data directory
+    data_dir = "data/Swahili data"
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
     
