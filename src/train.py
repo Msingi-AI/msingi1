@@ -386,10 +386,28 @@ def prepare_dataset(texts: List[str]) -> List[str]:
     return cleaned_texts
 
 if __name__ == "__main__":
-    # Load datasets
-    train_path = "data/Swahili data/Swahili data/train.txt"
-    val_path = "data/Swahili data/Swahili data/valid.txt"
+    # Find data directory
+    base_paths = [
+        "data/Swahili data/Swahili data",  # Local path
+        "data/Swahili_data",               # Alternative path
+        "data"                             # Colab path
+    ]
     
+    data_dir = None
+    for path in base_paths:
+        train_file = os.path.join(path, "train.txt")
+        if os.path.exists(train_file):
+            data_dir = path
+            break
+    
+    if data_dir is None:
+        raise FileNotFoundError("Could not find data directory with train.txt. Please ensure the data files are in one of these locations: " + ", ".join(base_paths))
+    
+    # Set up data paths
+    train_path = os.path.join(data_dir, "train.txt")
+    val_path = os.path.join(data_dir, "valid.txt")
+    
+    print(f"Using data directory: {data_dir}")
     print("Loading and preparing training data...")
     train_texts = load_dataset(train_path)
     train_texts = prepare_dataset(train_texts)
