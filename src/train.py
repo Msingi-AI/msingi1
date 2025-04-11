@@ -99,7 +99,7 @@ def compute_loss_with_penalty(logits, labels, alpha=0.1):
     return total_loss
 
 def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
-         training_config: Optional[TrainingConfig] = None):
+         training_config: Optional[TrainingConfig] = None, tokenizer_path: str = "tokenizer/tokenizer.json"):
     if training_config is None:
         training_config = TrainingConfig()
     
@@ -158,11 +158,11 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         print(f'Resuming from epoch {start_epoch}')
     
     # Create datasets
-    train_dataset = SwahiliDataset(train_texts, "tokenizer/tokenizer.json", training_config.sequence_length)
+    train_dataset = SwahiliDataset(train_texts, tokenizer_path, training_config.sequence_length)
     train_loader = DataLoader(train_dataset, batch_size=training_config.batch_size, shuffle=True)
     
     if val_texts:
-        val_dataset = SwahiliDataset(val_texts, "tokenizer/tokenizer.json", training_config.sequence_length)
+        val_dataset = SwahiliDataset(val_texts, tokenizer_path, training_config.sequence_length)
         val_loader = DataLoader(val_dataset, batch_size=training_config.batch_size)
     
     # Learning rate scheduler with warmup
@@ -396,17 +396,25 @@ if __name__ == "__main__":
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
     
+    # Set up tokenizer path
+    tokenizer_path = os.path.join("data", "tokenizer", "tokenizer.json")
+    
     # Check if directory and files exist
     print(f"\nChecking paths:")
     print(f"Data directory exists: {os.path.exists(data_dir)}")
+    
     if os.path.exists(data_dir):
         print("\nListing contents of data directory:")
         for item in os.listdir(data_dir):
             print(f"  {item}")
     
-    print(f"\nChecking data files:")
+    print(f"\nChecking files:")
     print(f"train.txt exists: {os.path.exists(train_path)}")
     print(f"valid.txt exists: {os.path.exists(val_path)}")
+    print(f"tokenizer.json exists: {os.path.exists(tokenizer_path)}")
+    
+    if not os.path.exists(tokenizer_path):
+        raise FileNotFoundError(f"Tokenizer file not found at {tokenizer_path}. Please ensure the tokenizer file is in the data/tokenizer directory.")
     
     print("\nLoading and preparing training data...")
     train_texts = load_dataset(train_path)
@@ -457,4 +465,5 @@ if __name__ == "__main__":
     train(model_config=model_config,
           train_texts=train_texts,
           val_texts=val_texts,
-          training_config=training_config)
+          training_config=training_config,
+          tokenizer_path=tokenizer_path)
