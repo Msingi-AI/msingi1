@@ -395,21 +395,19 @@ if __name__ == "__main__":
     for item in os.listdir('.'):
         print(f"  {item}")
     
-    if os.path.exists('data'):
+    # Set up data paths - data files are in data/data/Swahili data directory
+    data_dir = "data/data/Swahili data"
+    train_path = os.path.join(data_dir, "train.txt")
+    val_path = os.path.join(data_dir, "valid.txt")
+    
+    # Check if directory and files exist
+    print(f"\nChecking paths:")
+    print(f"Data directory exists: {os.path.exists(data_dir)}")
+    if os.path.exists(data_dir):
         print("\nListing contents of data directory:")
-        for item in os.listdir('data'):
+        for item in os.listdir(data_dir):
             print(f"  {item}")
-        
-        if os.path.exists('data/data'):
-            print("\nListing contents of data/data directory:")
-            for item in os.listdir('data/data'):
-                print(f"  {item}")
     
-    # Set up data paths - data files are in data/data directory
-    train_path = "content/MyDrive/msingi1/data/train.txt"
-    val_path = "content/MyDrive/msingi1/data/valid.txt"
-    
-    # Check if files exist
     print(f"\nChecking data files:")
     print(f"train.txt exists: {os.path.exists(train_path)}")
     print(f"valid.txt exists: {os.path.exists(val_path)}")
