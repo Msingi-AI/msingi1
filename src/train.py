@@ -70,7 +70,7 @@ class TrainingConfig:
     min_lr: float = 3e-5
     eval_interval: int = 500
     eval_iters: int = 100
-    save_interval: int = 1000
+    save_interval: int = 500  # Save twice per epoch (674 steps total)
     fp16: bool = True
     sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
     checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
