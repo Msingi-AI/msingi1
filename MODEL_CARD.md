@@ -36,24 +36,33 @@ Msingi1 is a Swahili language model designed for text generation and understandi
 
 ## Training Details
 
-### Training Configuration
-- **Batch Size**: 4
-- **Gradient Accumulation Steps**: 16 (effective batch size: 64)
-- **Learning Rate**: 3e-4
-- **Weight Decay**: 0.1
-- **Warmup Steps**: 1,000
-- **Training Sequence Length**: 1,024
-- **Optimizer**: AdamW
-- **Learning Rate Schedule**: Cosine with warmup
-- **Mixed Precision**: FP16 training enabled
-- **Gradient Checkpointing**: Supported
-- **Early Stopping**: Enabled, based on validation loss
+### Dataset
+- Total Size: 254.4 MB
+- Total Samples: 1,693,227 lines
+- Total Words: 39,639,824
+- Split: 80/10/10 (train/val/test)
+- Language: Swahili
+- Average words per sample: ~23
 
-### Memory Optimizations
-- Gradient checkpointing for memory efficiency
-- Mixed precision training (FP16)
-- Configurable sequence length
-- Memory-efficient attention implementation
+### Training Configuration
+- Batch size: 4 (hardware optimized)
+- Gradient accumulation: 16 steps (effective batch size = 64)
+- Learning rate: 3e-4 with cosine warmup
+- Warmup steps: 1000
+- Weight decay: 0.1
+- Max gradient norm: 1.0
+- Mixed precision: FP16 enabled
+- Sequence length: 1024 tokens
+- Training device: Google Colab GPU
+
+### Training Results
+- Initial loss: 10.3
+- Final loss: 8.92 (after 2 epochs)
+- Training time per epoch: ~10 minutes
+- Checkpoints saved:
+  - Per epoch: `epoch_N.pt`
+  - Best model: `best.pt`
+  - Latest state: `latest.pt`
 
 ## Intended Use
 - Swahili text generation
