@@ -320,6 +320,47 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 model.train()  # Back to training mode
         
+        # Save checkpoint at end of each epoch
+        try:
+            # Ensure checkpoint directory exists
+            os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+            
+            # Create checkpoint
+            checkpoint = {
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': total_loss / len(train_loader),
+                'config': model_config,
+            }
+            if scaler is not None:
+                checkpoint['scaler_state_dict'] = scaler.state_dict()
+            
+            # Save epoch checkpoint
+            epoch_path = os.path.join(training_config.checkpoint_dir, f'epoch_{epoch+1}.pt')
+            print(f'\nSaving epoch checkpoint to {epoch_path}')
+            torch.save(checkpoint, epoch_path)
+            
+            # Update latest checkpoint
+            latest_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
+            torch.save(checkpoint, latest_path)
+            
+            # Save as best if it's the best loss so far
+            current_loss = total_loss / len(train_loader)
+            if current_loss < best_val_loss:
+                best_val_loss = current_loss
+                best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
+                print(f'New best loss: {current_loss:.4f}, saving to {best_path}')
+                torch.save(checkpoint, best_path)
+            
+            print('Epoch checkpoint saved successfully')
+        except Exception as e:
+            print(f'\nERROR saving epoch checkpoint: {str(e)}')
+            print(f'Checkpoint directory: {training_config.checkpoint_dir}')
+            print(f'Directory exists: {os.path.exists(training_config.checkpoint_dir)}')
+            print(f'Directory is writable: {os.access(training_config.checkpoint_dir, os.W_OK)}')
+            raise
+        
         # Log epoch metrics
         avg_loss = total_loss / len(train_loader)
         if use_wandb:
