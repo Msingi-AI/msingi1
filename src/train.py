@@ -16,6 +16,40 @@ import numpy as np
 from tokenizers import Tokenizer
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
+from google.colab import drive
+
+# Mount Google Drive
+try:
+    drive.mount('/content/drive')
+except:
+    print("Warning: Could not mount Google Drive. Are you running in Colab?")
+
+# Drive path for checkpoints
+DRIVE_PATH = "/content/drive/MyDrive/msingi1"
+
+def verify_drive_mount():
+    """Verify Google Drive is mounted and paths exist"""
+    if not os.path.exists("/content/drive"):
+        raise RuntimeError("Google Drive is not mounted! Please run the notebook in Google Colab")
+    
+    if not os.path.exists(DRIVE_PATH):
+        os.makedirs(DRIVE_PATH, exist_ok=True)
+        print(f"Created msingi1 directory at {DRIVE_PATH}")
+    
+    checkpoint_dir = os.path.join(DRIVE_PATH, 'checkpoints')
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        print(f"Created checkpoints directory at {checkpoint_dir}")
+    
+    # Test write permissions
+    test_file = os.path.join(checkpoint_dir, 'test.txt')
+    try:
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+        print("Successfully verified write permissions to checkpoint directory")
+    except Exception as e:
+        raise RuntimeError(f"Cannot write to checkpoint directory: {e}")
 
 # Colab Drive path
 DRIVE_PATH = "/content/drive/MyDrive/msingi1"
@@ -210,37 +244,58 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 # Save checkpoint
                 if (step + 1) % training_config.save_interval == 0:
-                    checkpoint = {
-                        'epoch': epoch,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict(),
-                        'best_val_loss': best_val_loss,
-                        'config': model_config,
-                    }
-                    if scaler is not None:
-                        checkpoint['scaler_state_dict'] = scaler.state_dict()
-                    
-                    torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'latest.pt'))
-                    
-                    if val_texts:
-                        val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                    try:
+                        # Ensure checkpoint directory exists
+                        os.makedirs(training_config.checkpoint_dir, exist_ok=True)
                         
-                        if use_wandb:
-                            wandb.log({
-                                'val_loss': val_loss,
-                                'epoch': epoch,
-                                'global_step': global_step,
-                            })
+                        # Create checkpoint
+                        checkpoint = {
+                            'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'best_val_loss': best_val_loss,
+                            'config': model_config,
+                        }
+                        if scaler is not None:
+                            checkpoint['scaler_state_dict'] = scaler.state_dict()
                         
-                        if val_loss < best_val_loss:
-                            best_val_loss = val_loss
-                            patience_counter = 0
-                            torch.save(checkpoint, os.path.join(training_config.checkpoint_dir, 'best.pt'))
-                        else:
-                            patience_counter += 1
-                            if patience_counter >= 3:
-                                print(f'Early stopping triggered after {epoch + 1} epochs')
-                                break
+                        # Save latest checkpoint
+                        checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
+                        print(f'\nSaving checkpoint to {checkpoint_path}')
+                        torch.save(checkpoint, checkpoint_path)
+                        print('Checkpoint saved successfully')
+                        
+                        if val_texts:
+                            val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                            
+                            if use_wandb:
+                                wandb.log({
+                                    'val_loss': val_loss,
+                                    'epoch': epoch,
+                                    'global_step': global_step,
+                                })
+                            
+                            if val_loss < best_val_loss:
+                                best_val_loss = val_loss
+                                patience_counter = 0
+                                best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
+                                print(f'New best validation loss: {val_loss:.4f}, saving to {best_path}')
+                                torch.save(checkpoint, best_path)
+                            else:
+                                patience_counter += 1
+                                if patience_counter >= 3:
+                                    print(f'Early stopping triggered after {epoch + 1} epochs')
+                                    # Save final checkpoint before stopping
+                                    final_path = os.path.join(training_config.checkpoint_dir, 'final.pt')
+                                    print(f'Saving final model to {final_path}')
+                                    torch.save(checkpoint, final_path)
+                                    break
+                    except Exception as e:
+                        print(f'\nERROR saving checkpoint: {str(e)}')
+                        print(f'Checkpoint directory: {training_config.checkpoint_dir}')
+                        print(f'Directory exists: {os.path.exists(training_config.checkpoint_dir)}')
+                        print(f'Directory is writable: {os.access(training_config.checkpoint_dir, os.W_OK)}')
+                        raise
             
             total_loss += loss.item() * training_config.grad_accum_steps
             
