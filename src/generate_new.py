@@ -7,34 +7,21 @@ def load_model(checkpoint_path: str, device: str = "cuda" if torch.cuda.is_avail
     """Load the trained model from checkpoint."""
     print(f"Loading checkpoint from {checkpoint_path} to {device}")
     try:
-        # Try different loading methods
-        try:
-            # Method 1: Direct load
-            checkpoint = torch.load(checkpoint_path, map_location='cpu')
-        except:
-            # Method 2: Load with pickle
-            import pickle
-            checkpoint = torch.load(checkpoint_path, map_location='cpu', pickle_module=pickle)
-        
+        # Load checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location=device)
         print("Checkpoint loaded successfully")
-        print("Checkpoint keys:", checkpoint.keys())
         
         # Get model config
         config = checkpoint['config']
         print("Model config:", config.__dict__)
         
-        # Initialize model on CPU first
+        # Initialize model
         print("Initializing model...")
         model = Msingi1(config)
         
-        # Load state dict
-        state_dict = checkpoint['model_state_dict']
-        # Remove 'module.' prefix if it exists (from DataParallel/DistributedDataParallel)
-        state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-        model.load_state_dict(state_dict)
-        
-        # Move to target device
-        model = model.to(device)
+        # Load weights
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.to(device)
         model.eval()
         print("Model initialized and loaded successfully")
         

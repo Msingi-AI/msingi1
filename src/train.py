@@ -250,14 +250,9 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                         
                         # Create checkpoint
                         checkpoint = {
-                            'epoch': epoch,
                             'model_state_dict': model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),
-                            'best_val_loss': best_val_loss,
                             'config': model_config,
                         }
-                        if scaler is not None:
-                            checkpoint['scaler_state_dict'] = scaler.state_dict()
                         
                         # Save latest checkpoint
                         checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
@@ -327,14 +322,9 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             
             # Create checkpoint
             checkpoint = {
-                'epoch': epoch,
                 'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': total_loss / len(train_loader),
                 'config': model_config,
             }
-            if scaler is not None:
-                checkpoint['scaler_state_dict'] = scaler.state_dict()
             
             # Save epoch checkpoint
             epoch_path = os.path.join(training_config.checkpoint_dir, f'epoch_{epoch+1}.pt')
