@@ -164,44 +164,29 @@ class Msingi1(nn.Module):
         self.gradient_checkpointing = False
         
     def forward(self, input_ids, attention_mask=None):
-        batch_size, seq_length = input_ids.shape
-        
-        # Get embeddings
         hidden_states = self.embeddings(input_ids)
         
-        # Create causal mask
-        causal_mask = torch.triu(torch.ones(seq_length, seq_length), diagonal=1).bool()
-        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
-        causal_mask = causal_mask.to(input_ids.device)
-        
-        # Combine with attention mask if provided
-        if attention_mask is not None:
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)  # [batch, 1, 1, seq_len]
-            causal_mask = causal_mask | (~attention_mask.bool())
-        
-        # Process through layers
+        # Move freqs_cis to the same device as hidden states
         freqs_cis = self.freqs_cis.to(hidden_states.device)
         
-        for layer in self.layers:
-            if self.gradient_checkpointing and self.training:
+        # Process through transformer layers with optional gradient checkpointing
+        if self.gradient_checkpointing and self.training:
+            def create_custom_forward(module):
+                def custom_forward(*inputs):
+                    return module(*inputs)
+                return custom_forward
+
+            for layer in self.layers:
                 hidden_states = torch.utils.checkpoint.checkpoint(
-                    self.create_custom_forward(layer),
-                    hidden_states,
-                    freqs_cis,
-                    causal_mask
+                    create_custom_forward(layer),
+                    hidden_states, freqs_cis, attention_mask
                 )
-            else:
-                hidden_states = layer(hidden_states, freqs_cis, causal_mask)
+        else:
+            for layer in self.layers:
+                hidden_states = layer(hidden_states, freqs_cis, attention_mask)
         
         hidden_states = self.ln_f(hidden_states)
-        
-        # Efficient logits computation
-        logits = F.linear(hidden_states, self.lm_head.weight)
-        
-        # Apply efficient softmax only for the last token in training
-        if self.training:
-            logits = logits[:, -1:, :]  # Only compute loss for last token
-            logits = F.log_softmax(logits, dim=-1)  # Use log_softmax for numerical stability
+        logits = self.lm_head(hidden_states)
         
         return logits
     

@@ -17,7 +17,6 @@ from tokenizers import Tokenizer
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
 from google.colab import drive
-import argparse
 
 # Mount Google Drive
 try:
@@ -60,21 +59,21 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 40         # 40 epochs
-    batch_size: int = 8          # Batch size 8
-    grad_accum_steps: int = 4    # Reduced to 4 as requested
-    learning_rate: float = 5e-4  
+    num_epochs: int = 15  # Increased from 10
+    batch_size: int = 8   # Increased from 4
+    grad_accum_steps: int = 8  # Reduced from 16
+    learning_rate: float = 5e-4  # Slightly higher for smaller model
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
-    warmup_iters: int = 2000    
-    lr_decay_iters: int = 80000  
+    warmup_iters: int = 2000
+    lr_decay_iters: int = 20000
     min_lr: float = 3e-5
     eval_interval: int = 500
-    log_interval: int = 10
-    save_interval: int = 500
+    eval_iters: int = 100
+    save_interval: int = 500  # Save twice per epoch (674 steps total)
     fp16: bool = True
-    sequence_length: int = 1024
-    checkpoint_dir: str = "checkpoints"
+    sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
+    checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
@@ -106,31 +105,40 @@ class SwahiliDataset(Dataset):
             "labels": torch.tensor(labels, dtype=torch.long)
         }
 
-def compute_loss(logits, targets):
-    """Compute loss efficiently for decoder-only model."""
-    if logits.size(1) != 1:
-        # During inference, we might get full sequence
-        logits = logits[:, :-1, :]  # Remove last position
-        targets = targets[:, 1:]     # Shift targets right
-    else:
-        # During training, we only get last token
-        targets = targets[:, -1:]    # Only last token
+def compute_loss_with_penalty(logits, labels, alpha=0.1):
+    """Compute cross entropy loss with a repetition penalty."""
+    # Standard cross entropy loss
+    ce_loss = F.cross_entropy(
+        logits.view(-1, logits.size(-1)),
+        labels.view(-1),
+        ignore_index=-100
+    )
     
-    # Reshape for loss computation
-    logits = logits.reshape(-1, logits.size(-1))
-    targets = targets.reshape(-1)
+    # Compute repetition penalty
+    batch_size, seq_len = labels.shape
+    rep_penalty = 0
     
-    # Compute loss
-    loss = F.nll_loss(logits, targets)
-    return loss
+    # For each sequence in the batch
+    for i in range(batch_size):
+        # Get non-padded tokens
+        seq = labels[i][labels[i] != -100]
+        if len(seq) > 1:
+            # Count repeated tokens in windows of 3
+            for j in range(len(seq)-2):
+                window = seq[j:j+3]
+                unique_tokens = torch.unique(window)
+                rep_penalty += 1 - (len(unique_tokens) / len(window))
+    
+    rep_penalty = rep_penalty / (batch_size * seq_len)
+    
+    # Combine losses
+    total_loss = ce_loss + alpha * rep_penalty
+    return total_loss
 
 def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
          training_config: Optional[TrainingConfig] = None, tokenizer_path: str = "tokenizer/tokenizer.json"):
     if training_config is None:
         training_config = TrainingConfig()
-    
-    # Create checkpoint directory if it doesn't exist
-    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
     
     # Set up device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -211,8 +219,8 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
                 logits = model(input_ids)  # Model returns logits directly
                 
-                # Compute loss
-                loss = compute_loss(logits, labels)
+                # Compute loss with repetition penalty
+                loss = compute_loss_with_penalty(logits, labels)
                 loss = loss / training_config.grad_accum_steps
             
             # Backward pass with mixed precision
@@ -236,21 +244,58 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 # Save checkpoint
                 if (step + 1) % training_config.save_interval == 0:
-                    avg_loss = total_loss / (step + 1)
-                    is_best = False
-                    
-                    # Check if this is the best model
-                    if val_texts:
-                        val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
-                        is_best = val_loss < best_val_loss
-                        if is_best:
-                            best_val_loss = val_loss
-                    
-                    save_checkpoint(
-                        model, optimizer, scaler, model_config,
-                        epoch, step, avg_loss, best_val_loss,
-                        training_config, is_best
-                    )
+                    try:
+                        # Ensure checkpoint directory exists
+                        os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+                        
+                        # Create checkpoint
+                        checkpoint = {
+                            'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'best_val_loss': best_val_loss,
+                            'config': model_config,
+                        }
+                        if scaler is not None:
+                            checkpoint['scaler_state_dict'] = scaler.state_dict()
+                        
+                        # Save latest checkpoint
+                        checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
+                        print(f'\nSaving checkpoint to {checkpoint_path}')
+                        torch.save(checkpoint, checkpoint_path)
+                        print('Checkpoint saved successfully')
+                        
+                        if val_texts:
+                            val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                            
+                            if use_wandb:
+                                wandb.log({
+                                    'val_loss': val_loss,
+                                    'epoch': epoch,
+                                    'global_step': global_step,
+                                })
+                            
+                            if val_loss < best_val_loss:
+                                best_val_loss = val_loss
+                                patience_counter = 0
+                                best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
+                                print(f'New best validation loss: {val_loss:.4f}, saving to {best_path}')
+                                torch.save(checkpoint, best_path)
+                            else:
+                                patience_counter += 1
+                                if patience_counter >= 3:
+                                    print(f'Early stopping triggered after {epoch + 1} epochs')
+                                    # Save final checkpoint before stopping
+                                    final_path = os.path.join(training_config.checkpoint_dir, 'final.pt')
+                                    print(f'Saving final model to {final_path}')
+                                    torch.save(checkpoint, final_path)
+                                    break
+                    except Exception as e:
+                        print(f'\nERROR saving checkpoint: {str(e)}')
+                        print(f'Checkpoint directory: {training_config.checkpoint_dir}')
+                        print(f'Directory exists: {os.path.exists(training_config.checkpoint_dir)}')
+                        print(f'Directory is writable: {os.access(training_config.checkpoint_dir, os.W_OK)}')
+                        raise
             
             total_loss += loss.item() * training_config.grad_accum_steps
             
@@ -373,30 +418,6 @@ def get_cosine_schedule_with_warmup(
     
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
 
-def save_checkpoint(model, optimizer, scaler, model_config, epoch, step, loss, best_loss, training_config, is_best=False):
-    """Save model checkpoint."""
-    checkpoint = {
-        'epoch': epoch,
-        'step': step,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': loss,
-        'config': model_config,
-    }
-    if scaler is not None:
-        checkpoint['scaler_state_dict'] = scaler.state_dict()
-    
-    # Save latest checkpoint
-    latest_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
-    torch.save(checkpoint, latest_path)
-    print(f'\nSaved latest checkpoint to {latest_path}')
-    
-    # Save best checkpoint if this is the best loss
-    if is_best:
-        best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
-        torch.save(checkpoint, best_path)
-        print(f'New best loss! Saved checkpoint to {best_path}')
-
 def clean_text(text: str) -> str:
     """Clean and preprocess text data."""
     import re
@@ -445,56 +466,88 @@ def prepare_dataset(texts: List[str]) -> List[str]:
     
     return cleaned_texts
 
-def main():
-    """Main training function."""
-    # Parse arguments
-    parser = argparse.ArgumentParser(description='Train Msingi1 model')
-    parser.add_argument('--batch_size', type=int, default=8, help='Training batch size')
-    parser.add_argument('--grad_accum', type=int, default=4, help='Gradient accumulation steps')
-    parser.add_argument('--epochs', type=int, default=40, help='Number of epochs to train')
-    parser.add_argument('--lr', type=float, default=5e-4, help='Learning rate')
-    parser.add_argument('--fp16', action='store_true', help='Use mixed precision training')
-    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
-    parser.add_argument('--data_dir', type=str, default='data/processed', help='Directory containing the dataset')
-    parser.add_argument('--save_every', type=int, default=500, help='Save checkpoint every N steps')
-    parser.add_argument('--log_every', type=int, default=10, help='Log metrics every N steps')
-    parser.add_argument('--tokenizer_path', type=str, default='tokenizer/tokenizer.json', help='Path to tokenizer file')
-    args = parser.parse_args()
+if __name__ == "__main__":
+    # Print current directory and list contents
+    print(f"Current working directory: {os.getcwd()}")
     
-    # Initialize model config
-    model_config = MsingiConfig()
+    # Set up data paths - files are in data/data/Swahili data/Swahili data/
+    data_dir = os.path.join("data", "data", "Swahili data", "Swahili data")
+    train_path = os.path.join(data_dir, "train.txt")
+    val_path = os.path.join(data_dir, "valid.txt")
     
-    # Initialize training config with command line arguments
+    # Set up tokenizer path
+    tokenizer_path = os.path.join("data", "tokenizer", "tokenizer.json")
+    
+    # Check if directory and files exist
+    print(f"\nChecking paths:")
+    print(f"Data directory exists: {os.path.exists(data_dir)}")
+    
+    if os.path.exists(data_dir):
+        print("\nListing contents of data directory:")
+        for item in os.listdir(data_dir):
+            print(f"  {item}")
+    
+    print(f"\nChecking files:")
+    print(f"train.txt exists: {os.path.exists(train_path)}")
+    print(f"valid.txt exists: {os.path.exists(val_path)}")
+    print(f"tokenizer.json exists: {os.path.exists(tokenizer_path)}")
+    
+    if not os.path.exists(tokenizer_path):
+        raise FileNotFoundError(f"Tokenizer file not found at {tokenizer_path}. Please ensure the tokenizer file is in the data/tokenizer directory.")
+    
+    print("\nLoading and preparing training data...")
+    train_texts = load_dataset(train_path)
+    train_texts = prepare_dataset(train_texts)
+    
+    print("Loading and preparing validation data...")
+    val_texts = load_dataset(val_path)
+    val_texts = prepare_dataset(val_texts)
+    
+    print(f"Loaded {len(train_texts)} training samples and {len(val_texts)} validation samples")
+    
+    # Initialize model config with target architecture
+    model_config = MsingiConfig(
+        vocab_size=50000,
+        max_position_embeddings=2048,
+        hidden_size=768,
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
+        hidden_dropout_prob=0.1,
+        attention_probs_dropout_prob=0.1,
+        gradient_checkpointing=True
+    )
+    
+    # Create checkpoint directory in Google Drive
+    drive_checkpoint_dir = os.path.join(DRIVE_PATH, 'checkpoints')
+    os.makedirs(drive_checkpoint_dir, exist_ok=True)
+    print(f"\nSaving checkpoints to: {drive_checkpoint_dir}")
+    
+    # Initialize training config with Drive path
     training_config = TrainingConfig(
-        num_epochs=args.epochs,
-        batch_size=args.batch_size,
-        grad_accum_steps=args.grad_accum,
-        learning_rate=args.lr,
+        num_epochs=15,
+        batch_size=8,
+        grad_accum_steps=8,
+        learning_rate=5e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
         warmup_iters=2000,
-        lr_decay_iters=80000,
+        lr_decay_iters=20000,
         min_lr=3e-5,
         eval_interval=500,
-        log_interval=args.log_every,
-        save_interval=args.save_every,
-        fp16=args.fp16,
+        eval_iters=100,
+        save_interval=500,
+        fp16=True,
         sequence_length=1024,
-        checkpoint_dir=args.checkpoint_dir
+        checkpoint_dir=drive_checkpoint_dir  # Use Drive path
     )
     
-    # Load and preprocess data
-    train_path = os.path.join(args.data_dir, "train.txt")
-    val_path = os.path.join(args.data_dir, "valid.txt")
-    
-    print(f"Loading training data from {train_path}")
-    train_texts = load_dataset(train_path)
-    
-    print(f"Loading validation data from {val_path}")
-    val_texts = load_dataset(val_path)
+    # Create checkpoint directory
+    os.makedirs(training_config.checkpoint_dir, exist_ok=True)
     
     # Train model
-    train(model_config, train_texts, val_texts, training_config, args.tokenizer_path)
-
-if __name__ == "__main__":
-    main()
+    train(model_config=model_config,
+          train_texts=train_texts,
+          val_texts=val_texts,
+          training_config=training_config,
+          tokenizer_path=tokenizer_path)
