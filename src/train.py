@@ -455,6 +455,10 @@ def main():
     parser.add_argument('--lr', type=float, default=5e-4, help='Learning rate')
     parser.add_argument('--fp16', action='store_true', help='Use mixed precision training')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
+    parser.add_argument('--data_dir', type=str, default='data/processed', help='Directory containing the dataset')
+    parser.add_argument('--save_every', type=int, default=500, help='Save checkpoint every N steps')
+    parser.add_argument('--log_every', type=int, default=10, help='Log metrics every N steps')
+    parser.add_argument('--tokenizer_path', type=str, default='tokenizer/tokenizer.json', help='Path to tokenizer file')
     args = parser.parse_args()
     
     # Initialize model config
@@ -472,19 +476,25 @@ def main():
         lr_decay_iters=80000,
         min_lr=3e-5,
         eval_interval=500,
-        log_interval=10,
-        save_interval=500,
+        log_interval=args.log_every,
+        save_interval=args.save_every,
         fp16=args.fp16,
         sequence_length=1024,
         checkpoint_dir=args.checkpoint_dir
     )
     
     # Load and preprocess data
-    train_texts = load_dataset("train.txt")
-    val_texts = load_dataset("val.txt")
+    train_path = os.path.join(args.data_dir, "train.txt")
+    val_path = os.path.join(args.data_dir, "valid.txt")
+    
+    print(f"Loading training data from {train_path}")
+    train_texts = load_dataset(train_path)
+    
+    print(f"Loading validation data from {val_path}")
+    val_texts = load_dataset(val_path)
     
     # Train model
-    train(model_config, train_texts, val_texts, training_config)
+    train(model_config, train_texts, val_texts, training_config, args.tokenizer_path)
 
 if __name__ == "__main__":
     main()
