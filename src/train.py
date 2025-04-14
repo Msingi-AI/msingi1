@@ -61,7 +61,7 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 class TrainingConfig:
     num_epochs: int = 15  # Increased from 10
     batch_size: int = 8   # Increased from 4
-    grad_accum_steps: int = 8  # Reduced from 16
+    grad_accum_steps: int = 4  # Reduced from 16
     learning_rate: float = 5e-4  # Slightly higher for smaller model
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
