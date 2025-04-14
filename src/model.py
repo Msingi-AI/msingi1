@@ -33,12 +33,12 @@ def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
 class MsingiConfig:
     def __init__(
         self,
-        vocab_size=50000,
-        max_position_embeddings=2048,  # Increased for longer context
-        hidden_size=768,  # Increased for better capacity
-        num_hidden_layers=12,
-        num_attention_heads=12,
-        intermediate_size=3072,
+        vocab_size=32000,
+        max_position_embeddings=2048,
+        hidden_size=512,
+        num_hidden_layers=8,
+        num_attention_heads=8,
+        intermediate_size=2048,
         hidden_dropout_prob=0.1,
         attention_probs_dropout_prob=0.1,
         layer_norm_epsilon=1e-5,
@@ -164,29 +164,44 @@ class Msingi1(nn.Module):
         self.gradient_checkpointing = False
         
     def forward(self, input_ids, attention_mask=None):
+        batch_size, seq_length = input_ids.shape
+        
+        # Get embeddings
         hidden_states = self.embeddings(input_ids)
         
-        # Move freqs_cis to the same device as hidden states
+        # Create causal mask
+        causal_mask = torch.triu(torch.ones(seq_length, seq_length), diagonal=1).bool()
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+        causal_mask = causal_mask.to(input_ids.device)
+        
+        # Combine with attention mask if provided
+        if attention_mask is not None:
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)  # [batch, 1, 1, seq_len]
+            causal_mask = causal_mask | (~attention_mask.bool())
+        
+        # Process through layers
         freqs_cis = self.freqs_cis.to(hidden_states.device)
         
-        # Process through transformer layers with optional gradient checkpointing
-        if self.gradient_checkpointing and self.training:
-            def create_custom_forward(module):
-                def custom_forward(*inputs):
-                    return module(*inputs)
-                return custom_forward
-
-            for layer in self.layers:
+        for layer in self.layers:
+            if self.gradient_checkpointing and self.training:
                 hidden_states = torch.utils.checkpoint.checkpoint(
-                    create_custom_forward(layer),
-                    hidden_states, freqs_cis, attention_mask
+                    self.create_custom_forward(layer),
+                    hidden_states,
+                    freqs_cis,
+                    causal_mask
                 )
-        else:
-            for layer in self.layers:
-                hidden_states = layer(hidden_states, freqs_cis, attention_mask)
+            else:
+                hidden_states = layer(hidden_states, freqs_cis, causal_mask)
         
         hidden_states = self.ln_f(hidden_states)
-        logits = self.lm_head(hidden_states)
+        
+        # Efficient logits computation
+        logits = F.linear(hidden_states, self.lm_head.weight)
+        
+        # Apply efficient softmax only for the last token in training
+        if self.training:
+            logits = logits[:, -1:, :]  # Only compute loss for last token
+            logits = F.log_softmax(logits, dim=-1)  # Use log_softmax for numerical stability
         
         return logits
     

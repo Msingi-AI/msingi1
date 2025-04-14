@@ -59,21 +59,21 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 10  # Default 10 epochs
-    batch_size: int = 4   # Using batch size 4
-    grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
-    learning_rate: float = 3e-4
+    num_epochs: int = 40         # Increased to 40 epochs
+    batch_size: int = 8          # Keep batch size 8
+    grad_accum_steps: int = 8    # Keep accumulation steps 8
+    learning_rate: float = 5e-4  # Keep higher learning rate for smaller model
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
-    warmup_iters: int = 1000
-    lr_decay_iters: int = 20000
+    warmup_iters: int = 2000     # Keep warmup steps
+    lr_decay_iters: int = 80000  # Increased for 40 epochs
     min_lr: float = 3e-5
     eval_interval: int = 500
-    eval_iters: int = 100
-    save_interval: int = 500  # Save twice per epoch (674 steps total)
+    log_interval: int = 10
+    save_interval: int = 500
     fp16: bool = True
-    sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
-    checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
+    sequence_length: int = 1024
+    checkpoint_dir: str = "checkpoints"
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
@@ -105,35 +105,23 @@ class SwahiliDataset(Dataset):
             "labels": torch.tensor(labels, dtype=torch.long)
         }
 
-def compute_loss_with_penalty(logits, labels, alpha=0.1):
-    """Compute cross entropy loss with a repetition penalty."""
-    # Standard cross entropy loss
-    ce_loss = F.cross_entropy(
-        logits.view(-1, logits.size(-1)),
-        labels.view(-1),
-        ignore_index=-100
-    )
+def compute_loss(logits, targets):
+    """Compute loss efficiently for decoder-only model."""
+    if logits.size(1) != 1:
+        # During inference, we might get full sequence
+        logits = logits[:, :-1, :]  # Remove last position
+        targets = targets[:, 1:]     # Shift targets right
+    else:
+        # During training, we only get last token
+        targets = targets[:, -1:]    # Only last token
     
-    # Compute repetition penalty
-    batch_size, seq_len = labels.shape
-    rep_penalty = 0
+    # Reshape for loss computation
+    logits = logits.reshape(-1, logits.size(-1))
+    targets = targets.reshape(-1)
     
-    # For each sequence in the batch
-    for i in range(batch_size):
-        # Get non-padded tokens
-        seq = labels[i][labels[i] != -100]
-        if len(seq) > 1:
-            # Count repeated tokens in windows of 3
-            for j in range(len(seq)-2):
-                window = seq[j:j+3]
-                unique_tokens = torch.unique(window)
-                rep_penalty += 1 - (len(unique_tokens) / len(window))
-    
-    rep_penalty = rep_penalty / (batch_size * seq_len)
-    
-    # Combine losses
-    total_loss = ce_loss + alpha * rep_penalty
-    return total_loss
+    # Compute loss
+    loss = F.nll_loss(logits, targets)
+    return loss
 
 def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
          training_config: Optional[TrainingConfig] = None, tokenizer_path: str = "tokenizer/tokenizer.json"):
@@ -219,8 +207,8 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
                 logits = model(input_ids)  # Model returns logits directly
                 
-                # Compute loss with repetition penalty
-                loss = compute_loss_with_penalty(logits, labels)
+                # Compute loss
+                loss = compute_loss(logits, labels)
                 loss = loss / training_config.grad_accum_steps
             
             # Backward pass with mixed precision
@@ -525,18 +513,18 @@ if __name__ == "__main__":
     
     # Initialize training config with Drive path
     training_config = TrainingConfig(
-        num_epochs=10,
-        batch_size=4,  # Using batch size 4
-        grad_accum_steps=16,  # Adjusted accumulation steps
-        learning_rate=3e-4,
+        num_epochs=40,
+        batch_size=8,
+        grad_accum_steps=8,
+        learning_rate=5e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
-        warmup_iters=1000,
-        lr_decay_iters=20000,
+        warmup_iters=2000,
+        lr_decay_iters=80000,
         min_lr=3e-5,
         eval_interval=500,
-        eval_iters=100,
-        save_interval=1000,
+        log_interval=10,
+        save_interval=500,
         fp16=True,
         sequence_length=1024,
         checkpoint_dir=drive_checkpoint_dir  # Use Drive path
