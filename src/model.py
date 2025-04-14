@@ -33,12 +33,12 @@ def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
 class MsingiConfig:
     def __init__(
         self,
-        vocab_size=32000,
-        max_position_embeddings=2048,
-        hidden_size=512,
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=2048,
+        vocab_size=50000,
+        max_position_embeddings=2048,  # Increased for longer context
+        hidden_size=768,  # Increased for better capacity
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
         hidden_dropout_prob=0.1,
         attention_probs_dropout_prob=0.1,
         layer_norm_epsilon=1e-5,

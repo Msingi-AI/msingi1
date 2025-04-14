@@ -59,13 +59,13 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 15  # Increased from 10
-    batch_size: int = 8   # Increased from 4
-    grad_accum_steps: int = 4  # Reduced from 16
-    learning_rate: float = 5e-4  # Slightly higher for smaller model
+    num_epochs: int = 10  # Default 10 epochs
+    batch_size: int = 4   # Using batch size 4
+    grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
+    learning_rate: float = 3e-4
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
-    warmup_iters: int = 2000
+    warmup_iters: int = 1000
     lr_decay_iters: int = 20000
     min_lr: float = 3e-5
     eval_interval: int = 500
@@ -250,9 +250,14 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                         
                         # Create checkpoint
                         checkpoint = {
+                            'epoch': epoch,
                             'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'best_val_loss': best_val_loss,
                             'config': model_config,
                         }
+                        if scaler is not None:
+                            checkpoint['scaler_state_dict'] = scaler.state_dict()
                         
                         # Save latest checkpoint
                         checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
@@ -322,9 +327,14 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             
             # Create checkpoint
             checkpoint = {
+                'epoch': epoch,
                 'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': total_loss / len(train_loader),
                 'config': model_config,
             }
+            if scaler is not None:
+                checkpoint['scaler_state_dict'] = scaler.state_dict()
             
             # Save epoch checkpoint
             epoch_path = os.path.join(training_config.checkpoint_dir, f'epoch_{epoch+1}.pt')
@@ -515,18 +525,18 @@ if __name__ == "__main__":
     
     # Initialize training config with Drive path
     training_config = TrainingConfig(
-        num_epochs=15,
-        batch_size=8,
-        grad_accum_steps=8,
-        learning_rate=5e-4,
+        num_epochs=10,
+        batch_size=4,  # Using batch size 4
+        grad_accum_steps=16,  # Adjusted accumulation steps
+        learning_rate=3e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
-        warmup_iters=2000,
+        warmup_iters=1000,
         lr_decay_iters=20000,
         min_lr=3e-5,
         eval_interval=500,
         eval_iters=100,
-        save_interval=500,
+        save_interval=1000,
         fp16=True,
         sequence_length=1024,
         checkpoint_dir=drive_checkpoint_dir  # Use Drive path
