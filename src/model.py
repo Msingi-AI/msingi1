@@ -33,7 +33,7 @@ def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
 class MsingiConfig:
     def __init__(
         self,
-        vocab_size=50000,
+        vocab_size=32000,
         max_position_embeddings=1024,
         n_layer=6,
         n_head=6,
