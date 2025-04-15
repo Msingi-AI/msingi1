@@ -18,7 +18,7 @@ def train_tokenizer(
     os.makedirs(save_dir, exist_ok=True)
     
     # Initialize a new tokenizer
-    tokenizer = ByteLevelBPETokenizer(lowercase=True)
+    tokenizer = ByteLevelBPETokenizer()
     
     # Get paths to training files
     train_path = "data/Swahili data/Swahili data/train.txt"
