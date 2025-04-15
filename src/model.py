@@ -34,50 +34,50 @@ class MsingiConfig:
     def __init__(
         self,
         vocab_size=50000,
-        max_position_embeddings=2048,  # Increased for longer context
-        hidden_size=768,  # Increased for better capacity
-        num_hidden_layers=8,
-        num_attention_heads=8,
-        intermediate_size=3072,
-        hidden_dropout_prob=0.1,
-        attention_probs_dropout_prob=0.1,
+        max_position_embeddings=1024,
+        n_layer=6,
+        n_head=6,
+        n_embd=384,
+        intermediate_size=1536,
+        dropout=0.1,
+        rotary_emb=True,
+        gradient_checkpointing=True,
         layer_norm_epsilon=1e-5,
         initializer_range=0.02,
         use_cache=True,
-        gradient_checkpointing=False,
     ):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
-        self.hidden_size = hidden_size
-        self.num_hidden_layers = num_hidden_layers
-        self.num_attention_heads = num_attention_heads
+        self.n_layer = n_layer
+        self.n_head = n_head
+        self.n_embd = n_embd
         self.intermediate_size = intermediate_size
-        self.hidden_dropout_prob = hidden_dropout_prob
-        self.attention_probs_dropout_prob = attention_probs_dropout_prob
+        self.dropout = dropout
+        self.rotary_emb = rotary_emb
+        self.gradient_checkpointing = gradient_checkpointing
         self.layer_norm_epsilon = layer_norm_epsilon
         self.initializer_range = initializer_range
         self.use_cache = use_cache
-        self.gradient_checkpointing = gradient_checkpointing
         
         # Ensure hidden size is divisible by num_attention_heads
-        assert hidden_size % num_attention_heads == 0, "hidden_size must be divisible by num_attention_heads"
+        assert n_embd % n_head == 0, "n_embd must be divisible by n_head"
         # Ensure hidden size is divisible by 2 for rotary embeddings
-        assert hidden_size % 2 == 0, "hidden_size must be even for rotary embeddings"
+        assert n_embd % 2 == 0, "n_embd must be even for rotary embeddings"
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.num_attention_heads = config.num_attention_heads
-        self.hidden_size = config.hidden_size
-        self.head_dim = config.hidden_size // config.num_attention_heads
+        self.num_attention_heads = config.n_head
+        self.hidden_size = config.n_embd
+        self.head_dim = config.n_embd // config.n_head
         self.scaling = self.head_dim ** -0.5
         
-        self.q_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
-        self.k_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
-        self.v_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
-        self.out_proj = nn.Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.q_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.k_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.v_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
+        self.out_proj = nn.Linear(config.n_embd, config.n_embd, bias=False)
         
-        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        self.dropout = nn.Dropout(config.dropout)
         
     def forward(self, hidden_states, freqs_cis, attention_mask=None):
         batch_size, seq_length = hidden_states.shape[:2]
@@ -115,13 +115,13 @@ class MsingiBlock(nn.Module):
         super().__init__()
         self.attention = MultiHeadAttention(config)
         self.mlp = nn.Sequential(
-            nn.Linear(config.hidden_size, config.intermediate_size),
+            nn.Linear(config.n_embd, config.intermediate_size),
             nn.GELU(approximate='tanh'),
-            nn.Linear(config.intermediate_size, config.hidden_size),
-            nn.Dropout(config.hidden_dropout_prob),
+            nn.Linear(config.intermediate_size, config.n_embd),
+            nn.Dropout(config.dropout),
         )
-        self.ln1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
-        self.ln2 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.ln1 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
+        self.ln2 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         
     def forward(self, hidden_states, freqs_cis, attention_mask=None):
         # Pre-norm architecture
@@ -135,21 +135,21 @@ class Msingi1(nn.Module):
         super().__init__()
         self.config = config
         
-        self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList([MsingiBlock(config) for _ in range(config.num_hidden_layers)])
-        self.ln_f = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.embeddings = nn.Embedding(config.vocab_size, config.n_embd)
+        self.layers = nn.ModuleList([MsingiBlock(config) for _ in range(config.n_layer)])
+        self.ln_f = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         
         # Initialize weights
         self.apply(self._init_weights)
         
         # Compute rotary position embeddings
         self.freqs_cis = precompute_freqs_cis(
-            self.config.hidden_size // self.config.num_attention_heads,
+            self.config.n_embd // self.config.n_head,
             self.config.max_position_embeddings,
         )
         
         # Language modeling head
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         
         # Tie weights
         self.lm_head.weight = self.embeddings.weight
