@@ -324,7 +324,6 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         try:
             # Ensure checkpoint directory exists
             os.makedirs(training_config.checkpoint_dir, exist_ok=True)
-            epoch_ckpt_path = os.path.join(training_config.checkpoint_dir, f"epoch_{epoch+1}.pt")
             latest_ckpt_path = os.path.join(training_config.checkpoint_dir, "latest.pt")
             best_ckpt_path = os.path.join(training_config.checkpoint_dir, "best.pt")
             
@@ -338,9 +337,6 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 'val_loss': val_loss if val_texts else None,
                 'global_step': global_step,
             }
-            # Save epoch checkpoint
-            torch.save(checkpoint, epoch_ckpt_path)
-            print(f"[Checkpoint] Saved epoch checkpoint: {epoch_ckpt_path}")
             # Save latest checkpoint
             torch.save(checkpoint, latest_ckpt_path)
             print(f"[Checkpoint] Saved latest checkpoint: {latest_ckpt_path}")
