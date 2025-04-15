@@ -499,14 +499,14 @@ if __name__ == "__main__":
     
     # Initialize model config with target architecture
     model_config = MsingiConfig(
-        vocab_size=50000,
-        max_position_embeddings=2048,
-        hidden_size=768,
-        num_hidden_layers=12,
-        num_attention_heads=12,
-        intermediate_size=3072,
-        hidden_dropout_prob=0.1,
-        attention_probs_dropout_prob=0.1,
+        vocab_size=32000,
+        max_position_embeddings=1024,
+        n_embd=384,
+        n_layer=6,
+        n_head=6,
+        intermediate_size=1536,
+        dropout=0.1,
+        rotary_emb=True,
         gradient_checkpointing=True
     )
     
