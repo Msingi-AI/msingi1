@@ -9,7 +9,7 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 
 def train_tokenizer(
-    vocab_size: int = 50000,
+    vocab_size: int = 32000,
     min_frequency: int = 2,
     save_dir: str = "tokenizer"
 ) -> ByteLevelBPETokenizer:
