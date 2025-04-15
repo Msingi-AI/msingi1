@@ -324,42 +324,34 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         try:
             # Ensure checkpoint directory exists
             os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+            epoch_ckpt_path = os.path.join(training_config.checkpoint_dir, f"epoch_{epoch+1}.pt")
+            latest_ckpt_path = os.path.join(training_config.checkpoint_dir, "latest.pt")
+            best_ckpt_path = os.path.join(training_config.checkpoint_dir, "best.pt")
             
-            # Create checkpoint
             checkpoint = {
-                'epoch': epoch,
+                'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': total_loss / len(train_loader),
+                'scaler_state_dict': scaler.state_dict() if scaler else None,
                 'config': model_config,
+                'training_config': training_config,
+                'val_loss': val_loss if val_texts else None,
+                'global_step': global_step,
             }
-            if scaler is not None:
-                checkpoint['scaler_state_dict'] = scaler.state_dict()
-            
             # Save epoch checkpoint
-            epoch_path = os.path.join(training_config.checkpoint_dir, f'epoch_{epoch+1}.pt')
-            print(f'\nSaving epoch checkpoint to {epoch_path}')
-            torch.save(checkpoint, epoch_path)
-            
-            # Update latest checkpoint
-            latest_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
-            torch.save(checkpoint, latest_path)
-            
-            # Save as best if it's the best loss so far
-            current_loss = total_loss / len(train_loader)
-            if current_loss < best_val_loss:
-                best_val_loss = current_loss
-                best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
-                print(f'New best loss: {current_loss:.4f}, saving to {best_path}')
-                torch.save(checkpoint, best_path)
-            
-            print('Epoch checkpoint saved successfully')
+            torch.save(checkpoint, epoch_ckpt_path)
+            print(f"[Checkpoint] Saved epoch checkpoint: {epoch_ckpt_path}")
+            # Save latest checkpoint
+            torch.save(checkpoint, latest_ckpt_path)
+            print(f"[Checkpoint] Saved latest checkpoint: {latest_ckpt_path}")
+            # Save best checkpoint if improved
+            if val_texts:
+                if (not hasattr(train, 'best_val_loss')) or (val_loss < train.best_val_loss):
+                    train.best_val_loss = val_loss
+                    torch.save(checkpoint, best_ckpt_path)
+                    print(f"[Checkpoint] Saved best checkpoint: {best_ckpt_path} (val_loss={val_loss:.4f})")
         except Exception as e:
-            print(f'\nERROR saving epoch checkpoint: {str(e)}')
-            print(f'Checkpoint directory: {training_config.checkpoint_dir}')
-            print(f'Directory exists: {os.path.exists(training_config.checkpoint_dir)}')
-            print(f'Directory is writable: {os.access(training_config.checkpoint_dir, os.W_OK)}')
-            raise
+            print(f"[Checkpoint] Error saving checkpoint: {str(e)}")
         
         # Log epoch metrics
         avg_loss = total_loss / len(train_loader)
