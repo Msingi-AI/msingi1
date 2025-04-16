@@ -170,16 +170,24 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     best_val_loss = float('inf')
     patience_counter = 0
     checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
-    if os.path.exists(checkpoint_path):
+    if checkpoint_path and os.path.exists(checkpoint_path):
         print(f'Loading checkpoint from {checkpoint_path}')
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        start_epoch = checkpoint['epoch']
-        best_val_loss = checkpoint.get('best_val_loss', float('inf'))
-        if scaler and 'scaler_state_dict' in checkpoint:
-            scaler.load_state_dict(checkpoint['scaler_state_dict'])
-        print(f'Resuming from epoch {start_epoch}')
+        try:
+            # Try with weights_only=False (needed for PyTorch 2.6+)
+            checkpoint = torch.load(checkpoint_path, weights_only=False)
+            print("Checkpoint loaded successfully")
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            if 'scaler_state_dict' in checkpoint and scaler is not None:
+                scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            start_epoch = checkpoint['epoch']
+            print(f'Resuming from epoch {start_epoch}')
+        except Exception as e:
+            print(f"Error loading checkpoint: {str(e)}")
+            print("Starting from scratch")
+            start_epoch = 0
+    else:
+        start_epoch = 0
     
     train_dataset = SwahiliDataset(train_texts, tokenizer_path, training_config.sequence_length)
     train_loader = DataLoader(train_dataset, batch_size=training_config.batch_size, shuffle=True)
@@ -334,13 +342,13 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 'global_step': global_step,
             }
             # Save latest checkpoint
-            torch.save(checkpoint, latest_ckpt_path)
+            torch.save(checkpoint, latest_ckpt_path, _use_new_zipfile_serialization=True, pickle_protocol=4)
             print(f"[Checkpoint] Saved latest checkpoint: {latest_ckpt_path}")
             # Save best checkpoint if improved
             if val_texts:
                 if (not hasattr(train, 'best_val_loss')) or (val_loss < train.best_val_loss):
                     train.best_val_loss = val_loss
-                    torch.save(checkpoint, best_ckpt_path)
+                    torch.save(checkpoint, best_ckpt_path, _use_new_zipfile_serialization=True, pickle_protocol=4)
                     print(f"[Checkpoint] Saved best checkpoint: {best_ckpt_path} (val_loss={val_loss:.4f})")
         except Exception as e:
             print(f"[Checkpoint] Error saving checkpoint: {str(e)}")
