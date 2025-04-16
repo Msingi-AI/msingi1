@@ -181,7 +181,6 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             scaler.load_state_dict(checkpoint['scaler_state_dict'])
         print(f'Resuming from epoch {start_epoch}')
     
-    # Create datasets
     train_dataset = SwahiliDataset(train_texts, tokenizer_path, training_config.sequence_length)
     train_loader = DataLoader(train_dataset, batch_size=training_config.batch_size, shuffle=True)
     
@@ -189,7 +188,6 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         val_dataset = SwahiliDataset(val_texts, tokenizer_path, training_config.sequence_length)
         val_loader = DataLoader(val_dataset, batch_size=training_config.batch_size)
     
-    # Learning rate scheduler with warmup
     num_training_steps = len(train_loader) * training_config.num_epochs
     lr_scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -320,9 +318,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 model.train()  # Back to training mode
         
-        # Save checkpoint at end of each epoch
         try:
-            # Ensure checkpoint directory exists
             os.makedirs(training_config.checkpoint_dir, exist_ok=True)
             latest_ckpt_path = os.path.join(training_config.checkpoint_dir, "latest.pt")
             best_ckpt_path = os.path.join(training_config.checkpoint_dir, "best.pt")
@@ -448,25 +444,20 @@ def prepare_dataset(texts: List[str]) -> List[str]:
     
     for text in texts:
         cleaned = clean_text(text)
-        # Only keep substantial texts
         if len(cleaned.split()) >= min_length:
             cleaned_texts.append(cleaned)
     
     return cleaned_texts
 
 if __name__ == "__main__":
-    # Print current directory and list contents
     print(f"Current working directory: {os.getcwd()}")
     
-    # Set up data paths - files are in data/data/Swahili data/Swahili data/
     data_dir = os.path.join("data", "data", "Swahili data", "Swahili data")
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
     
-    # Set up tokenizer path
     tokenizer_path = os.path.join("data", "tokenizer", "tokenizer.json")
     
-    # Check if directory and files exist
     print(f"\nChecking paths:")
     print(f"Data directory exists: {os.path.exists(data_dir)}")
     
