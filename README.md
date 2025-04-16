@@ -1,4 +1,4 @@
-# Msingi1: A Research Journey in Swahili Language Modeling
+# Msingi1: Scaling Language Modeling for Swahili Through Small-Scale Pretraining
 
 ## Research Overview
 
