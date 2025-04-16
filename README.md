@@ -122,7 +122,7 @@ If you build upon our research in your work, please cite:
 ```bibtex
 @software{msingi1_2025,
   author = {Msingi AI Team},
-  title = {Msingi1: Research on Decoder-Only Transformer Language Models for Swahili},
+  title = {Msingi1: Scaling Language Modeling for Swahili Through Small-Scale Pretraining},
   year = {2025},
   url = {https://github.com/Msingi-AI/msingi1},
   note = {Research in progress}
