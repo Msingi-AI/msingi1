@@ -2,6 +2,7 @@ import torch
 from model import Msingi1, MsingiConfig
 from tokenizers import Tokenizer
 import argparse
+from train import TrainingConfig
 import os
 
 def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.7, top_k=50, top_p=0.9):
