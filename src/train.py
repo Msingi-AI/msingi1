@@ -16,13 +16,7 @@ import numpy as np
 from tokenizers import Tokenizer
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
-from google.colab import drive
 
-# Mount Google Drive
-try:
-    drive.mount('/content/drive')
-except:
-    print("Warning: Could not mount Google Drive. Are you running in Colab?")
 
 # Drive path for checkpoints
 DRIVE_PATH = "/content/drive/MyDrive/msingi1"
