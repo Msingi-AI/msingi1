@@ -1,79 +1,82 @@
-# Msingi1: A Decoder-Only Transformer Language Model for Swahili
+# Msingi1: A Research Journey in Swahili Language Modeling
 
-## Overview
+## Research Overview
 
-Msingi1 ("Foundation" in Swahili) is a decoder-only transformer language model specifically designed and optimized for Swahili text generation. This research project explores the development of foundation models for low-resource African languages, with a focus on creating efficient architectures that can be trained on modest computational resources while still producing high-quality text.
+Msingi1 ("Foundation" in Swahili) documents our ongoing research journey in developing decoder-only transformer language models for Swahili. This project is an experimental exploration of foundation models for low-resource African languages, with a focus on understanding the trade-offs between model size, training efficiency, and text generation quality.
 
-## Model Architecture Evolution
+> **Note**: This project is a work-in-progress research effort and not yet ready for production use. We're sharing our journey to contribute to the growing body of knowledge on African language NLP.
 
-The Msingi1 architecture has undergone several iterations to balance performance and efficiency:
+## Architectural Exploration
 
-### Initial Architecture (v1.0)
+Throughout this research journey, we've experimented with different model architectures:
+
+### Initial Exploration (v1.0)
 - 12 layers, 768 hidden size, 12 attention heads
 - Approximately 84M parameters
 - 2048 token context length
 - Rotary Position Embeddings (RoPE)
 - Pre-norm transformer architecture with GELU activation
 
-### Optimized Architecture (v1.5)
+### Current Experiments (v1.5)
 - 8 layers, 512 hidden size, 8 attention heads
 - Approximately 28M parameters
 - 1024 token context length
 - Improved training dynamics with better initialization
 - Enhanced EOS token handling for better text completion
 
-### Key Features
-- **Efficient Attention Implementation**: Optimized for training on limited GPU resources
-- **Gradient Checkpointing**: Enables training larger models with limited memory
-- **Tokenizer**: Custom ByteLevelBPE tokenizer with 32K vocabulary optimized for Swahili
-- **Advanced Text Generation**: Implements repetition penalties and n-gram blocking
+### Research Focus Areas
+- **Efficient Attention Mechanisms**: Exploring optimizations for limited GPU resources
+- **Gradient Checkpointing**: Testing memory-efficient training approaches
+- **Tokenization Strategies**: Investigating ByteLevelBPE tokenization with 32K vocabulary for Swahili
+- **Text Generation Techniques**: Experimenting with repetition penalties and n-gram blocking
 
-## Dataset
+## Dataset Characteristics
 
-The model is trained on a curated Swahili corpus comprising:
+Our experiments use a curated Swahili corpus with the following characteristics:
 
 - **Total Size**: 254.4 MB
 - **Total Samples**: 1,693,227 lines of text
 - **Total Words**: 39,639,824
 - **Split Ratio**: 80/10/10 (train/validation/test)
 
-The dataset includes diverse Swahili content from news articles, literature, government documents, and web content, ensuring broad language coverage.
+The dataset includes diverse Swahili content from news articles, literature, government documents, and web content.
 
-## Training Methodology
+## Experimental Training Approach
 
-Msingi1 employs several training optimizations to achieve good results with limited resources:
+Our current training methodology includes:
 
 - **Batch Size**: 4 with gradient accumulation of 16 steps (effective batch = 64)
 - **Learning Rate**: 3e-4 with cosine warmup and decay
-- **Training Duration**: 15 epochs with early stopping based on validation loss
+- **Training Duration**: Experimenting with 10-15 epochs with early stopping
 - **Mixed Precision**: FP16 training for speed and memory efficiency
 - **Sliding Window Processing**: 50% overlap for better context learning
 
-## Text Generation Results
+## Preliminary Text Generation Observations
 
-The model demonstrates promising capabilities in Swahili text generation. Here are examples from different stages of development:
+Our experiments show the evolution of the model's capabilities. Here are some examples from different stages:
 
-### Early Training (Epoch 5)
+### Early Experiments (Epoch 5)
 ```
 Prompt: Habari ya leo ni
 Output: Habari ya leo ni ni ni ni ni shilingi la la la la la la la moja moja moja kampuni kampuni kufanya hilo muda kui mambo bwana bwana bwana bwana
 ```
 
-### Improved Model (Epoch 10, with repetition penalty)
+### Mid-Training Observations (Epoch 10, with repetition penalty)
 ```
 Prompt: Habari ya leo ni
 Output: Habari ya leo ni mbili sheria sheria sana eneo tena jeshi bila fainali kufanya mkoani binafsi upande kuwa kuwa kuwa kupitia mafanikio polisi zao zao zao eneo eneo eneo
 ```
 
-### Latest Model (8-layer, 512-hidden)
+### Target Quality (Not Yet Achieved)
 ```
 Prompt: Tanzania ni nchi
-Output: Tanzania ni nchi kubwa katika Afrika Mashariki. Ina watu wengi wanaozungumza Kiswahili na lugha nyingine za kienyeji. Mji mkuu wa Tanzania ni Dodoma ingawa Dar es Salaam ndio mji mkubwa zaidi.
+Target: Tanzania ni nchi kubwa katika Afrika Mashariki. Ina watu wengi wanaozungumza Kiswahili na lugha nyingine za kienyeji. Mji mkuu wa Tanzania ni Dodoma ingawa Dar es Salaam ndio mji mkubwa zaidi.
 ```
 
-## Usage
+## Development Setup
 
-### Installation
+For researchers interested in replicating or building upon our experiments:
+
 ```bash
 # Clone repository
 git clone https://github.com/Msingi-AI/msingi1.git
@@ -83,52 +86,46 @@ cd msingi1
 pip install -r requirements.txt
 ```
 
-### Text Generation
+### Experimental Scripts
 ```bash
-# Basic usage
-python src/test_model.py --prompt "Habari ya leo ni"
+# Text generation experiments
+python src/test_model.py --prompt "Habari ya leo ni" --temperature 1.2 --repetition_penalty 1.5
 
-# Advanced parameters
-python src/test_model.py --prompt "Tanzania ni nchi" --temperature 1.2 --repetition_penalty 1.5
-```
-
-### Training
-```bash
-# Train from scratch
+# Training experiments
 python src/train.py
-
-# Resume training from checkpoint
-python src/train.py --resume_from checkpoints/latest.pt
 ```
 
 ## Project Structure
-- `src/`: Source code for model architecture, training and inference
+- `src/`: Experimental code for model architecture, training and inference
   - `model.py`: Msingi1 model architecture definition
-  - `train.py`: Training loop and optimization
-  - `test_model.py`: Text generation and evaluation
+  - `train.py`: Training loop and optimization experiments
+  - `test_model.py`: Text generation and evaluation tools
   - `train_tokenizer.py`: Tokenizer training utilities
 - `data/`: Data processing scripts and dataset utilities
-- `checkpoints/`: Model checkpoints (best.pt, latest.pt)
+- `checkpoints/`: Experimental model checkpoints
 - `tokenizer/`: Tokenizer files and vocabulary
-- `MODEL_CARD.md`: Detailed model specifications and performance metrics
+- `MODEL_CARD.md`: Research notes on model specifications
 
-## Future Directions
+## Research Directions
 
-1. **Multilingual Expansion**: Extending to other East African languages
-2. **Instruction Tuning**: Fine-tuning for instruction following
-3. **Evaluation Benchmarks**: Developing standardized benchmarks for Swahili NLP
-4. **Quantization**: 4-bit and 8-bit model quantization for mobile deployment
+Our ongoing and future research questions include:
 
-## Citation
+1. **Multilingual Potential**: How can we extend to other East African languages?
+2. **Instruction Tuning**: What approaches work best for instruction following in Swahili?
+3. **Evaluation Challenges**: How do we develop standardized benchmarks for Swahili NLP?
+4. **Efficiency Research**: What quantization approaches work best for African language models?
 
-If you use Msingi1 in your research, please cite:
+## Research Citation
+
+If you build upon our research in your work, please cite:
 
 ```bibtex
 @software{msingi1_2025,
   author = {Msingi AI Team},
-  title = {Msingi1: A Decoder-Only Transformer Language Model for Swahili},
+  title = {Msingi1: Research on Decoder-Only Transformer Language Models for Swahili},
   year = {2025},
-  url = {https://github.com/Msingi-AI/msingi1}
+  url = {https://github.com/Msingi-AI/msingi1},
+  note = {Research in progress}
 }
 ```
 
