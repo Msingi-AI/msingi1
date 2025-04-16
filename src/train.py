@@ -521,7 +521,7 @@ if __name__ == "__main__":
     
     # Initialize training config with Drive path
     training_config = TrainingConfig(
-        num_epochs=10,
+        num_epochs=15,  # Train for 15 epochs
         batch_size=4,  # Using batch size 4
         grad_accum_steps=16,  # Adjusted accumulation steps
         learning_rate=3e-4,
