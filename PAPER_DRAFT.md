@@ -1,9 +1,8 @@
 # Msingi1: Exploring Efficient Transformer Language Models for Swahili
 
 **Kiplangat Korir**  
-Department of Computer Science  
-University of Nairobi  
-kkorir@example.edu  
+MsingiAI  
+kiplangat@msingi.ai  
 
 ## Abstract
 
@@ -168,7 +167,7 @@ Future work will focus on:
 
 ## Acknowledgments
 
-I would like to thank the Masakhane community for their valuable insights and the University of Nairobi for supporting this research.
+I would like to thank the Masakhane community for their valuable insights and MsingiAI for supporting this research.
 
 ## References
 
