@@ -81,11 +81,26 @@ class SwahiliDataset(Dataset):
             encoded = self.tokenizer.encode(text)
             input_ids = [self.tokenizer.token_to_id("<s>")] + encoded.ids + [self.tokenizer.token_to_id("</s>")]
             
-            # Create overlapping sequences of max_length
-            for i in range(0, len(input_ids) - max_length + 1, max_length // 2):
-                sequence = input_ids[i:i + max_length]
-                if len(sequence) == max_length:
-                    self.examples.append(sequence)
+            # For short sequences, use them directly with BOS/EOS
+            if len(input_ids) <= max_length:
+                # Pad if needed
+                if len(input_ids) < max_length:
+                    padding = [self.tokenizer.token_to_id("<pad>")] * (max_length - len(input_ids))
+                    input_ids = input_ids + padding
+                self.examples.append(input_ids)
+            else:
+                # For longer sequences, create overlapping chunks with proper BOS/EOS
+                for i in range(0, len(input_ids) - max_length + 1, max_length // 2):
+                    sequence = input_ids[i:i + max_length]
+                    # Ensure each sequence has BOS at start
+                    if i > 0 and sequence[0] != self.tokenizer.token_to_id("<s>"):
+                        sequence[0] = self.tokenizer.token_to_id("<s>")
+                    # Ensure each sequence has EOS at end or is full length
+                    if len(sequence) == max_length:
+                        # Add EOS if not present in the last position and not a full chunk
+                        if i + max_length >= len(input_ids) and sequence[-1] != self.tokenizer.token_to_id("</s>"):
+                            sequence[-1] = self.tokenizer.token_to_id("</s>")
+                        self.examples.append(sequence)
     
     def __len__(self):
         return len(self.examples)

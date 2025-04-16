@@ -6,12 +6,15 @@ from train import TrainingConfig
 import os
 from collections import defaultdict
 
-def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.9, top_k=40, top_p=0.92, repetition_penalty=1.2, no_repeat_ngram_size=3):
+def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.9, top_k=40, top_p=0.92, repetition_penalty=1.2, no_repeat_ngram_size=3, force_eos=True):
     """Generate text from a prompt with advanced sampling techniques."""
     # Encode the prompt
     input_ids = tokenizer.encode(prompt).ids
     input_ids = [tokenizer.token_to_id("<s>")] + input_ids
     input_ids = torch.tensor(input_ids).unsqueeze(0)
+    
+    # Get EOS token ID for later use
+    eos_token_id = tokenizer.token_to_id("</s>")
     
     # Move to the same device as model
     input_ids = input_ids.to(next(model.parameters()).device)
@@ -21,7 +24,7 @@ def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.9, top
     
     # Generate tokens
     with torch.no_grad():
-        for _ in range(max_length):
+        for i in range(max_length):
             # Get predictions
             outputs = model(input_ids)
             next_token_logits = outputs[0, -1, :]
@@ -38,6 +41,11 @@ def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.9, top
                 prev_tokens = input_ids[0][-(no_repeat_ngram_size-1):].tolist()
                 for banned_token in get_banned_tokens(prev_tokens, generated_ngrams, no_repeat_ngram_size):
                     next_token_logits[banned_token] = float('-inf')
+            
+            # Increase probability of EOS token as sequence gets longer
+            # This helps the model learn when to end sequences naturally
+            if i > max_length * 0.8 and eos_token_id < len(next_token_logits):
+                next_token_logits[eos_token_id] += 2.0 * (i - 0.8 * max_length) / (0.2 * max_length)
             
             # Apply temperature
             next_token_logits = next_token_logits / temperature
@@ -61,7 +69,7 @@ def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.9, top
             next_token = torch.multinomial(probs, num_samples=1)
             
             # Stop if we predict the end token
-            if next_token.item() == tokenizer.token_to_id("</s>"):
+            if next_token.item() == eos_token_id:
                 break
                 
             # Add the predicted token to input
