@@ -1,4 +1,4 @@
-# Msingi1: Exploring Efficient Transformer Language Models for Swahili
+# Msingi1: Scaling Language Modeling for Swahili Through Small-Scale Pretraining
 
 **Kiplangat Korir**  
 MsingiAI  
