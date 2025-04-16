@@ -2,8 +2,9 @@ import torch
 from model import Msingi1, MsingiConfig
 from tokenizers import Tokenizer
 import argparse
+import os
 
-def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.8, top_p=0.9):
+def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.7, top_k=50, top_p=0.9):
     """Generate text from a prompt."""
     # Encode the prompt
     input_ids = tokenizer.encode(prompt).ids
@@ -19,6 +20,11 @@ def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.8, top
             # Get predictions
             outputs = model(input_ids)
             next_token_logits = outputs[0, -1, :] / temperature
+            
+            # Apply top-k filtering
+            if top_k > 0:
+                indices_to_remove = next_token_logits < torch.topk(next_token_logits, top_k)[0][..., -1, None]
+                next_token_logits[indices_to_remove] = float('-inf')
             
             # Apply nucleus sampling
             sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
@@ -49,70 +55,102 @@ def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.8, top
     
     return generated_text
 
+def load_model(checkpoint_path, device='cpu'):
+    """Load the model from a checkpoint file."""
+    print(f"Loading model from {checkpoint_path} on {device}")
+    
+    try:
+        # Load checkpoint (with weights_only=False for PyTorch 2.6 compatibility)
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        print("Checkpoint loaded successfully")
+        
+        # Get model config from checkpoint
+        if 'config' in checkpoint:
+            config = checkpoint['config']
+            print(f"Using config from checkpoint: {config.n_layer} layers, {config.n_embd} hidden size")
+        else:
+            # Fallback to default config for our small model
+            config = MsingiConfig(
+                vocab_size=32000,
+                max_position_embeddings=1024,
+                n_layer=6,
+                n_head=6,
+                n_embd=384,
+                intermediate_size=1536,
+                dropout=0.1,
+                rotary_emb=True,
+                gradient_checkpointing=False  # Turn off for inference
+            )
+            print("Using default config (checkpoint didn't contain config)")
+        
+        # Initialize model
+        model = Msingi1(config)
+        
+        # Load state dict
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint)
+        
+        # Set to evaluation mode
+        model.eval()
+        print("Model loaded successfully")
+        return model
+    
+    except Exception as e:
+        print(f"Error loading model: {str(e)}")
+        raise
+
 def main():
     parser = argparse.ArgumentParser(description='Test the Msingi1 model')
-    parser.add_argument('--model_path', type=str, required=True, help='Path to the model checkpoint')
-    parser.add_argument('--tokenizer_path', type=str, default='tokenizer/tokenizer.json', help='Path to the tokenizer')
-    parser.add_argument('--prompt', type=str, required=True, help='Prompt to generate from')
-    parser.add_argument('--max_length', type=int, default=100, help='Maximum length to generate')
-    parser.add_argument('--temperature', type=float, default=0.8, help='Sampling temperature')
-    parser.add_argument('--top_p', type=float, default=0.9, help='Nucleus sampling parameter')
+    parser.add_argument('--checkpoint', type=str, default='checkpoints/best.pt', 
+                        help='Path to the model checkpoint (default: checkpoints/best.pt)')
+    parser.add_argument('--tokenizer', type=str, default='tokenizer/tokenizer.json', 
+                        help='Path to the tokenizer (default: tokenizer/tokenizer.json)')
+    parser.add_argument('--prompt', type=str, default='Habari ya leo ni', 
+                        help='Prompt to generate from')
+    parser.add_argument('--max_length', type=int, default=50, 
+                        help='Maximum length to generate (default: 50)')
+    parser.add_argument('--temperature', type=float, default=0.7, 
+                        help='Sampling temperature (default: 0.7)')
+    parser.add_argument('--top_k', type=int, default=50, 
+                        help='Top-k filtering parameter (default: 50)')
+    parser.add_argument('--top_p', type=float, default=0.9, 
+                        help='Nucleus sampling parameter (default: 0.9)')
+    parser.add_argument('--device', type=str, default='cpu', 
+                        help='Device to run on (default: cpu)')
     args = parser.parse_args()
 
+    # Check if files exist
+    if not os.path.exists(args.checkpoint):
+        print(f"Error: Checkpoint file not found at {args.checkpoint}")
+        return
+    
+    if not os.path.exists(args.tokenizer):
+        print(f"Error: Tokenizer file not found at {args.tokenizer}")
+        return
+
     # Load the tokenizer
-    tokenizer = Tokenizer.from_file(args.tokenizer_path)
+    tokenizer = Tokenizer.from_file(args.tokenizer)
+    print(f"Tokenizer loaded with vocabulary size: {tokenizer.get_vocab_size()}")
 
-    # Initialize model config and model
-    config = MsingiConfig(
-        hidden_size=512,  # Match saved model dimensions
-        num_hidden_layers=12,
-        num_attention_heads=8,  # Adjusted to be compatible with hidden_size
-        vocab_size=35523
-    )
-    model = Msingi1(config)
-
-    # Load the model weights
-    checkpoint = torch.load(args.model_path)
-    if 'model_state_dict' in checkpoint:
-        state_dict = checkpoint['model_state_dict']
-    else:
-        state_dict = checkpoint
+    # Load the model
+    model = load_model(args.checkpoint, device=args.device)
     
-    # Handle key renaming
-    new_state_dict = {}
-    for k, v in state_dict.items():
-        if k.startswith('layers.') and '.attention.' in k:
-            # Map attention keys
-            if 'query' in k:
-                k = k.replace('query', 'q_proj')
-            elif 'key' in k:
-                k = k.replace('key', 'k_proj')
-            elif 'value' in k:
-                k = k.replace('value', 'v_proj')
-        elif k.startswith('layernorm'):
-            k = k.replace('layernorm', 'ln_f')
-        new_state_dict[k] = v
-    
-    # Load the state dict
-    model.load_state_dict(new_state_dict, strict=False)
-    
-    # Move model to GPU if available
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = model.to(device)
-    model.eval()
-
     # Generate text
+    print(f"\nGenerating text with: temperature={args.temperature}, top_k={args.top_k}, top_p={args.top_p}, max_length={args.max_length}")
     generated_text = generate_text(
         model, 
         tokenizer, 
         args.prompt,
         max_length=args.max_length,
         temperature=args.temperature,
+        top_k=args.top_k,
         top_p=args.top_p
     )
     
     print(f"\nPrompt: {args.prompt}")
-    print(f"\nGenerated text:\n{generated_text}")
+    print(f"\nGenerated text:\n{'-' * 40}\n{generated_text}\n{'-' * 40}")
 
 if __name__ == '__main__':
     main()
