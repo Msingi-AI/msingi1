@@ -4,9 +4,10 @@ from tokenizers import Tokenizer
 import argparse
 from train import TrainingConfig
 import os
+from collections import defaultdict
 
-def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.7, top_k=50, top_p=0.9):
-    """Generate text from a prompt."""
+def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.9, top_k=40, top_p=0.92, repetition_penalty=1.2, no_repeat_ngram_size=3):
+    """Generate text from a prompt with advanced sampling techniques."""
     # Encode the prompt
     input_ids = tokenizer.encode(prompt).ids
     input_ids = [tokenizer.token_to_id("<s>")] + input_ids
@@ -15,12 +16,31 @@ def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.7, top
     # Move to the same device as model
     input_ids = input_ids.to(next(model.parameters()).device)
     
+    # Track generated n-grams for no_repeat_ngram_size
+    generated_ngrams = {}
+    
     # Generate tokens
     with torch.no_grad():
         for _ in range(max_length):
             # Get predictions
             outputs = model(input_ids)
-            next_token_logits = outputs[0, -1, :] / temperature
+            next_token_logits = outputs[0, -1, :]
+            
+            # Apply repetition penalty
+            if repetition_penalty > 1.0:
+                for token_id in set(input_ids[0].tolist()):
+                    if token_id in range(len(next_token_logits)):
+                        next_token_logits[token_id] /= repetition_penalty
+            
+            # Apply n-gram blocking
+            if no_repeat_ngram_size > 0 and len(input_ids[0]) >= no_repeat_ngram_size:
+                # Extract the last n-1 tokens
+                prev_tokens = input_ids[0][-(no_repeat_ngram_size-1):].tolist()
+                for banned_token in get_banned_tokens(prev_tokens, generated_ngrams, no_repeat_ngram_size):
+                    next_token_logits[banned_token] = float('-inf')
+            
+            # Apply temperature
+            next_token_logits = next_token_logits / temperature
             
             # Apply top-k filtering
             if top_k > 0:
@@ -46,6 +66,10 @@ def generate_text(model, tokenizer, prompt, max_length=100, temperature=0.7, top
                 
             # Add the predicted token to input
             input_ids = torch.cat([input_ids, next_token.unsqueeze(0)], dim=1)
+            
+            # Update n-gram tracking
+            if no_repeat_ngram_size > 0:
+                update_ngrams(input_ids[0].tolist(), generated_ngrams, no_repeat_ngram_size)
     
     # Decode the generated tokens
     generated_ids = input_ids[0].tolist()
@@ -102,6 +126,33 @@ def load_model(checkpoint_path, device='cpu'):
         print(f"Error loading model: {str(e)}")
         raise
 
+def get_banned_tokens(prev_tokens, generated_ngrams, no_repeat_ngram_size):
+    """Get tokens that would form a banned n-gram."""
+    banned_tokens = []
+    # Check if the last n-1 tokens can form a banned n-gram
+    if tuple(prev_tokens) in generated_ngrams:
+        # Get tokens that would create a banned n-gram
+        banned_tokens = generated_ngrams[tuple(prev_tokens)]
+    return banned_tokens
+
+def update_ngrams(input_ids, generated_ngrams, no_repeat_ngram_size):
+    """Update the n-gram tracking dictionary."""
+    # Only update if we have enough tokens
+    if len(input_ids) < no_repeat_ngram_size:
+        return
+    
+    # Get the last n-gram
+    current_ngram = tuple(input_ids[-(no_repeat_ngram_size):])
+    
+    # Store the last token of this n-gram as banned for the prefix (n-1 tokens)
+    prefix = current_ngram[:-1]
+    last_token = current_ngram[-1]
+    
+    if prefix not in generated_ngrams:
+        generated_ngrams[prefix] = []
+    
+    generated_ngrams[prefix].append(last_token)
+
 def main():
     parser = argparse.ArgumentParser(description='Test the Msingi1 model')
     parser.add_argument('--checkpoint', type=str, default='checkpoints/best.pt', 
@@ -112,12 +163,16 @@ def main():
                         help='Prompt to generate from')
     parser.add_argument('--max_length', type=int, default=50, 
                         help='Maximum length to generate (default: 50)')
-    parser.add_argument('--temperature', type=float, default=0.7, 
-                        help='Sampling temperature (default: 0.7)')
-    parser.add_argument('--top_k', type=int, default=50, 
-                        help='Top-k filtering parameter (default: 50)')
-    parser.add_argument('--top_p', type=float, default=0.9, 
-                        help='Nucleus sampling parameter (default: 0.9)')
+    parser.add_argument('--temperature', type=float, default=1.0, 
+                        help='Sampling temperature (default: 1.0)')
+    parser.add_argument('--top_k', type=int, default=40, 
+                        help='Top-k filtering parameter (default: 40)')
+    parser.add_argument('--top_p', type=float, default=0.95, 
+                        help='Nucleus sampling parameter (default: 0.95)')
+    parser.add_argument('--repetition_penalty', type=float, default=1.3, 
+                        help='Penalty for repeating tokens (default: 1.3)')
+    parser.add_argument('--no_repeat_ngram_size', type=int, default=3, 
+                        help='Size of n-grams to prevent repetition (default: 3)')
     parser.add_argument('--device', type=str, default='cpu', 
                         help='Device to run on (default: cpu)')
     args = parser.parse_args()
@@ -139,7 +194,7 @@ def main():
     model = load_model(args.checkpoint, device=args.device)
     
     # Generate text
-    print(f"\nGenerating text with: temperature={args.temperature}, top_k={args.top_k}, top_p={args.top_p}, max_length={args.max_length}")
+    print(f"\nGenerating text with:\n - Temperature: {args.temperature}\n - Top-k: {args.top_k}\n - Top-p: {args.top_p}\n - Repetition penalty: {args.repetition_penalty}\n - No-repeat n-gram size: {args.no_repeat_ngram_size}\n - Max length: {args.max_length}")
     generated_text = generate_text(
         model, 
         tokenizer, 
@@ -147,7 +202,9 @@ def main():
         max_length=args.max_length,
         temperature=args.temperature,
         top_k=args.top_k,
-        top_p=args.top_p
+        top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty,
+        no_repeat_ngram_size=args.no_repeat_ngram_size
     )
     
     print(f"\nPrompt: {args.prompt}")
