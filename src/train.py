@@ -53,7 +53,7 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 10  # Default 10 epochs
+    num_epochs: int = 15  # Increased from 10 to 15
     batch_size: int = 4   # Using batch size 4
     grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
     learning_rate: float = 3e-4
@@ -490,10 +490,10 @@ if __name__ == "__main__":
     model_config = MsingiConfig(
         vocab_size=32000,
         max_position_embeddings=1024,
-        n_embd=384,
-        n_layer=6,
-        n_head=6,
-        intermediate_size=1536,
+        n_embd=512,
+        n_layer=8,
+        n_head=8,
+        intermediate_size=2048,
         dropout=0.1,
         rotary_emb=True,
         gradient_checkpointing=True
