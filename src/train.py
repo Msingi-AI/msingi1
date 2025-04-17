@@ -90,7 +90,9 @@ class SwahiliDataset(Dataset):
                 self.examples.append(input_ids)
             else:
                 # For longer sequences, create overlapping chunks with proper BOS/EOS
-                for i in range(0, len(input_ids) - max_length + 1, max_length // 2):
+                # Using a stride of 3/4 of max_length (25% overlap) instead of 1/2 (50% overlap)
+                stride = max_length * 3 // 4
+                for i in range(0, len(input_ids) - max_length + 1, stride):
                     sequence = input_ids[i:i + max_length]
                     # Ensure each sequence has BOS at start
                     if i > 0 and sequence[0] != self.tokenizer.token_to_id("<s>"):
