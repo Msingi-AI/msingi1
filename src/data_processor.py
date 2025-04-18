@@ -644,7 +644,7 @@ def get_word_stats(texts):
 
 if __name__ == "__main__":
     # Load dataset
-    dataset_file = "dataset.txt"
+    dataset_file = "/content/drive/MyDrive/msingi1/data/train.txt"
     dataset_texts = load_dataset(dataset_file)
     print(f"Loaded {len(dataset_texts)} samples from dataset")
     

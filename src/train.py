@@ -471,7 +471,7 @@ def prepare_dataset(texts: List[str]) -> List[str]:
 if __name__ == "__main__":
     print(f"Current working directory: {os.getcwd()}")
     
-    data_dir = "/content/drive/MyDrive/msingi1/data/Swahili data/Swahili data"
+    data_dir = os.path.join(DRIVE_PATH, "data")
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
     
