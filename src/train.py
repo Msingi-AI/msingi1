@@ -53,7 +53,7 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 15  # Increased from 10 to 15
+    num_epochs: int = 3  # Train for 3 epochs
     batch_size: int = 4   # Using batch size 4
     grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
     learning_rate: float = 3e-4
@@ -523,7 +523,7 @@ if __name__ == "__main__":
     
     # Initialize training config with Drive path
     training_config = TrainingConfig(
-        num_epochs=15,  # Train for 15 epochs
+        num_epochs=3,  # Train for 3 epochs
         batch_size=4,  # Using batch size 4
         grad_accum_steps=16,  # Adjusted accumulation steps
         learning_rate=3e-4,
