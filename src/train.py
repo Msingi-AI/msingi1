@@ -76,7 +76,7 @@ class SwahiliDataset(Dataset):
         
         # Encode all texts
         self.examples = []
-        for text in texts:
+        for text in tqdm(texts, desc="Building SwahiliDataset"):
             # Encode and add BOS/EOS tokens
             encoded = self.tokenizer.encode(text)
             input_ids = [self.tokenizer.token_to_id("<s>")] + encoded.ids + [self.tokenizer.token_to_id("</s>")]
