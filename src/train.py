@@ -459,7 +459,7 @@ def clean_text(text: str) -> str:
 def prepare_dataset(texts: List[str]) -> List[str]:
     """Prepare dataset by cleaning and filtering texts."""
     cleaned_texts = []
-    min_length = 100  # Minimum text length to keep
+    min_length = 0  # Include all text samples (no length filtering)
     
     for text in texts:
         cleaned = clean_text(text)
