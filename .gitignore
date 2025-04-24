@@ -188,6 +188,7 @@ tokenizer/*.vocab
 # Dataset files
 data/
 Swahili Corpus/
+hcs-na-v2/
 
 #Original Dataset
 best.pt

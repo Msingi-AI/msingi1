@@ -21,8 +21,8 @@ def train_tokenizer(
     tokenizer = ByteLevelBPETokenizer()
     
     # Get paths to training files
-    train_path = "data/Swahili data/Swahili data/train.txt"
-    valid_path = "data/Swahili data/Swahili data/valid.txt"
+    train_path = "data/train.txt"
+    valid_path = "data/valid.txt"
     
     print("Training tokenizer...")
     # Train the tokenizer
