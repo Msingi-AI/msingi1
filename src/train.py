@@ -70,38 +70,61 @@ class TrainingConfig:
     checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
 
 class SwahiliDataset(Dataset):
-    def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
+    def __init__(self, texts: List[str], tokenizer_path: str, max_length: int, batch_size: int = 10000):
         # Load the trained tokenizer
         self.tokenizer = Tokenizer.from_file(tokenizer_path)
-
-        # Batch encode all texts for efficiency
-        print(f"Batch tokenizing {len(texts)} samples...")
-        encoded_batch = self.tokenizer.encode_batch(texts)
-        bos_id = self.tokenizer.token_to_id("<s>")
-        eos_id = self.tokenizer.token_to_id("</s>")
-        pad_id = self.tokenizer.token_to_id("<pad>")
-
+        self.bos_id = self.tokenizer.token_to_id("<s>")
+        self.eos_id = self.tokenizer.token_to_id("</s>")
+        self.pad_id = self.tokenizer.token_to_id("<pad>")
+        self.max_length = max_length
+        
+        # Process texts in smaller batches to avoid memory issues
         self.examples = []
-        for encoded in tqdm(encoded_batch, desc="Processing tokenized samples"):
-            input_ids = [bos_id] + encoded.ids + [eos_id]
-            if len(input_ids) <= max_length:
-                # Pad if needed
-                if len(input_ids) < max_length:
-                    padding = [pad_id] * (max_length - len(input_ids))
-                    input_ids = input_ids + padding
-                self.examples.append(input_ids)
-            else:
-                stride = max_length * 3 // 4
-                for i in range(0, len(input_ids) - max_length + 1, stride):
-                    sequence = input_ids[i:i + max_length]
-                    # Ensure BOS at start
-                    if i > 0 and sequence[0] != bos_id:
-                        sequence[0] = bos_id
-                    # Ensure EOS at end for last chunk
-                    if len(sequence) == max_length:
-                        if i + max_length >= len(input_ids) and sequence[-1] != eos_id:
-                            sequence[-1] = eos_id
-                        self.examples.append(sequence)
+        total_texts = len(texts)
+        print(f"Processing {total_texts} samples in batches of {batch_size}...")
+        
+        for i in range(0, total_texts, batch_size):
+            batch_end = min(i + batch_size, total_texts)
+            current_batch = texts[i:batch_end]
+            print(f"Processing batch {i//batch_size + 1}/{(total_texts-1)//batch_size + 1} ({i}-{batch_end})")
+            
+            # Batch encode current chunk
+            encoded_batch = self.tokenizer.encode_batch(current_batch)
+            
+            # Process each encoded text
+            for encoded in tqdm(encoded_batch, desc=f"Processing batch {i//batch_size + 1}"):
+                self._process_encoded_text(encoded)
+                
+            # Free memory
+            del encoded_batch
+            import gc
+            gc.collect()
+            
+        print(f"Dataset preparation complete. Created {len(self.examples)} training examples.")
+    
+    def _process_encoded_text(self, encoded):
+        # Add BOS/EOS tokens
+        input_ids = [self.bos_id] + encoded.ids + [self.eos_id]
+        
+        if len(input_ids) <= self.max_length:
+            # Pad if needed
+            if len(input_ids) < self.max_length:
+                padding = [self.pad_id] * (self.max_length - len(input_ids))
+                input_ids = input_ids + padding
+            self.examples.append(input_ids)
+        else:
+            # For longer sequences, create overlapping chunks
+            stride = self.max_length * 3 // 4
+            for i in range(0, len(input_ids) - self.max_length + 1, stride):
+                sequence = input_ids[i:i + self.max_length]
+                # Ensure BOS at start
+                if i > 0 and sequence[0] != self.bos_id:
+                    sequence[0] = self.bos_id
+                # Ensure EOS at end for last chunk
+                if len(sequence) == self.max_length:
+                    if i + self.max_length >= len(input_ids) and sequence[-1] != self.eos_id:
+                        sequence[-1] = self.eos_id
+                    self.examples.append(sequence)
     
     def __len__(self):
         return len(self.examples)
@@ -173,7 +196,8 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if training_config.fp16 and torch.cuda.is_available():
         print("Using mixed precision training")
         from torch.cuda.amp import GradScaler
-        scaler = GradScaler()
+        # Use the updated GradScaler API to avoid deprecation warning
+        scaler = GradScaler(device_type='cuda')
     
     # Load checkpoint if it exists
     start_epoch = 0
@@ -297,15 +321,6 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                                 best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
                                 print(f'New best validation loss: {val_loss:.4f}, saving to {best_path}')
                                 torch.save(checkpoint, best_path)
-                            else:
-                                patience_counter += 1
-                                if patience_counter >= 3:
-                                    print(f'Early stopping triggered after {epoch + 1} epochs')
-                                    # Save final checkpoint before stopping
-                                    final_path = os.path.join(training_config.checkpoint_dir, 'final.pt')
-                                    print(f'Saving final model to {final_path}')
-                                    torch.save(checkpoint, final_path)
-                                    break
                     except Exception as e:
                         print(f'\nERROR saving checkpoint: {str(e)}')
                         print(f'Checkpoint directory: {training_config.checkpoint_dir}')
@@ -351,15 +366,31 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 'val_loss': val_loss if val_texts else None,
                 'global_step': global_step,
             }
-            # Save latest checkpoint
-            torch.save(checkpoint, latest_ckpt_path, _use_new_zipfile_serialization=True, pickle_protocol=4)
-            print(f"[Checkpoint] Saved latest checkpoint: {latest_ckpt_path}")
-            # Save best checkpoint if improved
-            if val_texts:
-                if (not hasattr(train, 'best_val_loss')) or (val_loss < train.best_val_loss):
-                    train.best_val_loss = val_loss
-                    torch.save(checkpoint, best_ckpt_path, _use_new_zipfile_serialization=True, pickle_protocol=4)
-                    print(f"[Checkpoint] Saved best checkpoint: {best_ckpt_path} (val_loss={val_loss:.4f})")
+            torch.save(checkpoint, latest_ckpt_path)
+            print(f"Saved checkpoint after epoch {epoch+1} to {latest_ckpt_path}")
+            
+            # Save best model if we have a new best validation loss
+            if val_texts and val_loss < best_val_loss:
+                best_val_loss = val_loss
+                torch.save(checkpoint, best_ckpt_path)
+                print(f"New best validation loss: {val_loss:.4f}, saved to {best_ckpt_path}")
+                
+                # Also save in HF format
+                try:
+                    from save_model_hf import save_model_hf_format
+                    
+                    hf_dir = os.path.join(training_config.checkpoint_dir, "hf_model")
+                    os.makedirs(hf_dir, exist_ok=True)
+                    
+                    save_model_hf_format(
+                        checkpoint_path=best_ckpt_path,
+                        output_dir=hf_dir,
+                        tokenizer_path=tokenizer_path,
+                        model_name="msingi1-swahili",
+                    )
+                    print(f"Model saved in HF format at {hf_dir}")
+                except Exception as e:
+                    print(f"Warning: Failed to save in HF format: {e}")
         except Exception as e:
             print(f"[Checkpoint] Error saving checkpoint: {str(e)}")
         
@@ -373,6 +404,53 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             })
         
         print(f"Epoch {epoch+1}/{training_config.num_epochs} - Average Loss: {avg_loss:.4f}")
+    
+    # Save final model at the end of training
+    final_ckpt_path = os.path.join(training_config.checkpoint_dir, "final.pt")
+    try:
+        # Create final checkpoint
+        final_checkpoint = {
+            'epoch': training_config.num_epochs,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scaler_state_dict': scaler.state_dict() if scaler else None,
+            'config': model_config,
+            'training_config': training_config,
+            'val_loss': val_loss if val_texts else None,
+        }
+        
+        # Save in PyTorch format
+        torch.save(final_checkpoint, final_ckpt_path)
+        print(f"\nTraining complete! Saved final model to {final_ckpt_path}")
+        
+        # Save final model in HF format
+        try:
+            # Import here to avoid dependency issues
+            from save_model_hf import save_model_hf_format
+            
+            # Create HF directory
+            hf_final_dir = os.path.join(training_config.checkpoint_dir, "hf_model_final")
+            os.makedirs(hf_final_dir, exist_ok=True)
+            
+            # Save in HF format
+            print("Saving final model in Hugging Face format...")
+            save_model_hf_format(
+                checkpoint_path=final_ckpt_path,
+                output_dir=hf_final_dir,
+                tokenizer_path=tokenizer_path,
+                model_name="msingi1-swahili",
+            )
+            print(f"Final model saved in HF format at {hf_final_dir}")
+            print("\nYou can now load this model with the Hugging Face Transformers library:")
+            print("```python")
+            print("from transformers import AutoTokenizer, AutoModelForCausalLM")
+            print(f"\ntokenizer = AutoTokenizer.from_pretrained(\"{hf_final_dir}\")")
+            print(f"model = AutoModelForCausalLM.from_pretrained(\"{hf_final_dir}\")")
+            print("```")
+        except Exception as e:
+            print(f"Warning: Failed to save final model in HF format: {e}")
+    except Exception as e:
+        print(f"Error saving final model: {e}")
 
 def evaluate(model, val_loader, config, device, fp16=False):
     """Evaluate the model on validation data with optional mixed precision."""
