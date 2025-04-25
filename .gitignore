@@ -176,7 +176,7 @@ cython_debug/
 
 # Large data files
 archive.zip
-*.json
+#*.json
 !package.json
 
 # Tokenizer files
