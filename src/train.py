@@ -196,8 +196,20 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if training_config.fp16 and torch.cuda.is_available():
         print("Using mixed precision training")
         from torch.cuda.amp import GradScaler
-        # Use the updated GradScaler API to avoid deprecation warning
-        scaler = GradScaler(device_type='cuda')
+        # Check PyTorch version to handle different GradScaler APIs
+        import pkg_resources
+        torch_version = pkg_resources.get_distribution("torch").version
+        print(f"PyTorch version: {torch_version}")
+        
+        # For PyTorch 2.0+, use device_type parameter if available
+        try:
+            # Try the new API first
+            scaler = GradScaler(device_type='cuda')
+            print("Using new GradScaler API with device_type")
+        except TypeError:
+            # Fall back to old API if device_type is not supported
+            scaler = GradScaler()
+            print("Using legacy GradScaler API (no device_type support)")
     
     # Load checkpoint if it exists
     start_epoch = 0
