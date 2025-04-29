@@ -8,7 +8,7 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device="cpu
     """Precompute the frequency tensor for complex exponentials (cis) with given dimensions.
     
     Args:
-        dim: Dimension of the rotation embeddings
+        dim: Dimension of the rotation embeddings (head dimension)
         end: Maximum sequence length
         theta: Base value for frequencies
         device: Device to store the frequencies on
@@ -17,7 +17,8 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device="cpu
         Tuple of (cos, sin) tensors of shape [end, dim // 2]
     """
     # Make sure dim is even for rotary embeddings
-    assert dim % 2 == 0, "Dimension must be even for rotary embeddings"
+    if dim % 2 != 0:
+        raise ValueError(f"Dimension must be even for rotary embeddings, got {dim}")
     
     # Compute frequencies
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device).float() / dim))
@@ -55,40 +56,50 @@ def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None):
     if position_ids is None:
         position_ids = torch.arange(seq_len, device=q.device)
     
-    # Get the correct part of cos and sin
-    if position_ids.max() >= cos.shape[0]:
-        # If sequence is longer than precomputed, dynamically extend
-        # This is safer than using modulo which could cause pattern repetition
-        max_pos = position_ids.max().item() + 1
-        print(f"Warning: Input sequence length {max_pos} exceeds precomputed frequency length {cos.shape[0]}")
-        print(f"Dynamically extending rotary embeddings to length {max_pos + 128}")
-        
-        # Compute extended rotary embeddings
-        extended_cos, extended_sin = precompute_freqs_cis(
-            d_head, max_pos + 128, device=q.device
-        )
-        
-        # Replace the buffers with extended versions
-        cos = extended_cos
-        sin = extended_sin
+    # Ensure position_ids are valid - clip to the maximum available position
+    max_position = cos.shape[0] - 1
     
-    # Get the cos and sin values for the positions
-    cos_pos = cos[position_ids]  # [seq_len, dim//2]
-    sin_pos = sin[position_ids]  # [seq_len, dim//2]
+    # Safely clamp position_ids to valid range
+    safe_position_ids = torch.clamp(position_ids, 0, max_position)
+    
+    if position_ids.max() > max_position:
+        print(f"Warning: Position ids max {position_ids.max().item()} exceeds precomputed frequency length {max_position}")
+        print(f"Using clamped position ids. Consider increasing max_position_embeddings in config.")
+    
+    # Get the cos and sin values for the positions (safely)
+    cos_pos = cos[safe_position_ids]  # [seq_len, dim//2]
+    sin_pos = sin[safe_position_ids]  # [seq_len, dim//2]
     
     # Reshape for broadcasting
     cos_pos = cos_pos.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
     sin_pos = sin_pos.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
     
+    # Ensure head dimension is even
+    if d_head % 2 != 0:
+        raise ValueError(f"Head dimension must be even for rotary embeddings, got {d_head}")
+    
     # Split q and k into two parts along the last dimension
-    q1, q2 = q.chunk(2, dim=-1)
-    k1, k2 = k.chunk(2, dim=-1)
+    q_split = torch.reshape(q, (batch, seq_len, n_heads, 2, d_head // 2))
+    k_split = torch.reshape(k, (batch, seq_len, n_heads, 2, d_head // 2))
     
     # Apply rotation using the following identities:
-    # q_rot = q1 * cos - q2 * sin
-    # q_pass = q2 * cos + q1 * sin
-    q_rot = torch.cat([q1 * cos_pos - q2 * sin_pos, q2 * cos_pos + q1 * sin_pos], dim=-1)
-    k_rot = torch.cat([k1 * cos_pos - k2 * sin_pos, k2 * cos_pos + k1 * sin_pos], dim=-1)
+    # q_rot = [q1 * cos - q2 * sin, q2 * cos + q1 * sin]
+    q1, q2 = q_split[:, :, :, 0], q_split[:, :, :, 1]
+    k1, k2 = k_split[:, :, :, 0], k_split[:, :, :, 1]
+    
+    # Apply rotation
+    q1_rot = q1 * cos_pos - q2 * sin_pos
+    q2_rot = q2 * cos_pos + q1 * sin_pos
+    k1_rot = k1 * cos_pos - k2 * sin_pos
+    k2_rot = k2 * cos_pos + k1 * sin_pos
+    
+    # Concatenate back
+    q_rot = torch.cat([q1_rot, q2_rot], dim=-1)
+    k_rot = torch.cat([k1_rot, k2_rot], dim=-1)
+    
+    # Reshape back to original shape
+    q_rot = torch.reshape(q_rot, (batch, seq_len, n_heads, d_head))
+    k_rot = torch.reshape(k_rot, (batch, seq_len, n_heads, d_head))
     
     return q_rot, k_rot
 
@@ -155,39 +166,62 @@ class MultiHeadAttention(nn.Module):
         Returns:
             Output tensor of shape [batch_size, seq_length, hidden_size]
         """
-        batch_size, seq_length = hidden_states.shape[:2]
+        batch_size, seq_length, _ = hidden_states.shape
         
-        # Project and reshape
-        q = self.q_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
-        k = self.k_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
-        v = self.v_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
+        # Project to query, key, value
+        q = self.q_proj(hidden_states)
+        k = self.k_proj(hidden_states)
+        v = self.v_proj(hidden_states)
         
-        # Apply rotary embeddings
-        q, k = apply_rotary_pos_emb(q, k, cos, sin)
+        # Reshape to [batch_size, seq_length, n_heads, head_dim]
+        q = q.view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
+        k = k.view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
+        v = v.view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
         
-        # Transpose for attention computation
-        q = q.transpose(1, 2)  # (batch, n_heads, seq_len, head_dim)
+        # Apply rotary embeddings to query and key
+        try:
+            q, k = apply_rotary_pos_emb(q, k, cos, sin)
+        except Exception as e:
+            print(f"Error in rotary embeddings: {e}")
+            print(f"q shape: {q.shape}, k shape: {k.shape}")
+            print(f"cos shape: {cos.shape}, sin shape: {sin.shape}")
+            # Fall back to no rotary embeddings
+            pass
+        
+        # Transpose to [batch_size, n_heads, seq_length, head_dim]
+        q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
         
-        # Compute attention scores
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
+        # Scale query
+        q = q * self.scaling
         
+        # Compute attention scores
+        # [batch_size, n_heads, seq_length, seq_length]
+        attention_scores = torch.matmul(q, k.transpose(-2, -1))
+        
+        # Apply attention mask if provided
         if attention_mask is not None:
-            # Expand mask for broadcasting to attention heads
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-            # Convert mask values to a large negative number to mask out padding tokens
-            attention_mask = (1.0 - attention_mask) * -10000.0
-            scores = scores + attention_mask
-            
-        attention_weights = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(q)
-        attention_weights = self.dropout(attention_weights)
+            attention_scores = attention_scores + attention_mask
+        
+        # Apply softmax
+        attention_probs = F.softmax(attention_scores, dim=-1)
+        attention_probs = self.dropout(attention_probs)
         
         # Compute output
-        output = torch.matmul(attention_weights, v)
-        output = output.transpose(1, 2).contiguous().view(batch_size, seq_length, self.hidden_size)
+        # [batch_size, n_heads, seq_length, head_dim]
+        output = torch.matmul(attention_probs, v)
         
-        return self.out_proj(output)
+        # Transpose back to [batch_size, seq_length, n_heads, head_dim]
+        output = output.transpose(1, 2).contiguous()
+        
+        # Reshape to [batch_size, seq_length, hidden_size]
+        output = output.view(batch_size, seq_length, self.hidden_size)
+        
+        # Project to output
+        output = self.out_proj(output)
+        
+        return output
 
 
 class MsingiBlock(nn.Module):
@@ -249,10 +283,12 @@ class Msingi1(nn.Module):
         # Tie weights
         self.lm_head.weight = self.embeddings.weight
         
-        # Precompute rotary embeddings
-        # Add a safety margin to max_seq_len to avoid index errors
-        max_seq_len = config.max_position_embeddings + 128  # Add safety margin
-        cos, sin = precompute_freqs_cis(config.n_embd, max_seq_len)
+        # Precompute rotary embeddings with a very large safety margin
+        # This avoids having to dynamically extend during forward passes
+        head_dim = config.n_embd // config.n_head
+        max_seq_len = max(2048, config.max_position_embeddings * 2)  # Use at least 2048 or double the config
+        print(f"Precomputing rotary embeddings for sequence length {max_seq_len}")
+        cos, sin = precompute_freqs_cis(head_dim, max_seq_len)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
         
@@ -287,25 +323,20 @@ class Msingi1(nn.Module):
         
         # Ensure sequence length doesn't exceed our precomputed frequencies
         if seq_length > self.cos.shape[0]:
-            # Dynamically extend rotary embeddings if needed
-            max_seq_len = seq_length + 256  # Add larger safety margin
+            # Precompute new rotary embeddings with a larger size
+            max_seq_len = seq_length + 512  # Add much larger safety margin
             print(f"Warning: Input sequence length {seq_length} exceeds precomputed frequency length {self.cos.shape[0]}")
-            print(f"Dynamically extending rotary embeddings to length {max_seq_len}")
+            print(f"Precomputing new rotary embeddings with length {max_seq_len}")
             
-            try:
-                # Compute extended rotary embeddings on the same device as input_ids
-                cos, sin = precompute_freqs_cis(
-                    self.config.n_embd // self.config.n_head, 
-                    max_seq_len, 
-                    device=input_ids.device
-                )
-                # Register the new buffers
-                self.register_buffer("cos", cos, persistent=False)
-                self.register_buffer("sin", sin, persistent=False)
-            except Exception as e:
-                print(f"Error extending rotary embeddings: {e}")
-                print("Falling back to original embeddings with position_ids modulo")
-                # We'll handle this in the layer forward passes
+            # Compute on CPU first to avoid CUDA errors, then transfer
+            cos, sin = precompute_freqs_cis(
+                self.config.n_embd // self.config.n_head, 
+                max_seq_len, 
+                device="cpu"
+            )
+            # Move to the same device as input_ids
+            self.register_buffer("cos", cos.to(input_ids.device), persistent=False)
+            self.register_buffer("sin", sin.to(input_ids.device), persistent=False)
         
         # Get embeddings
         hidden_states = self.embeddings(input_ids)
