@@ -180,10 +180,25 @@ class MsingiBlock(nn.Module):
         Returns:
             Output tensor of shape [batch_size, seq_length, hidden_size]
         """
-        # Pre-norm architecture
-        attn_output = self.attention(self.ln1(hidden_states), freqs_cis, attention_mask)
-        hidden_states = hidden_states + attn_output
-        hidden_states = hidden_states + self.mlp(self.ln2(hidden_states))
+        # Add safety checks to prevent NaN values
+        if torch.isnan(hidden_states).any():
+            print("Warning: NaN values detected in hidden states before layer norm")
+            # Replace NaN values with zeros
+            hidden_states = torch.where(torch.isnan(hidden_states), 
+                                        torch.zeros_like(hidden_states), 
+                                        hidden_states)
+        
+        # Pre-norm architecture with safety checks
+        residual = hidden_states
+        hidden_states = self.ln1(hidden_states)
+        attn_output = self.attention(hidden_states, freqs_cis, attention_mask)
+        hidden_states = residual + attn_output
+        
+        residual = hidden_states
+        hidden_states = self.ln2(hidden_states)
+        mlp_output = self.mlp(hidden_states)
+        hidden_states = residual + mlp_output
+        
         return hidden_states
 
 class Msingi1(nn.Module):

@@ -6,7 +6,7 @@ from model import MsingiConfig, Msingi1
 from data_processor import load_dataset, prepare_dataset
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import autocast, GradScaler
 from transformers import PreTrainedTokenizerFast
 from tqdm import tqdm
 from pathlib import Path
@@ -177,12 +177,18 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
+    # Set deterministic mode for reproducibility
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+    
     # Initialize model
     model = Msingi1(model_config)
     model.to(device)
     
-    # Enable gradient checkpointing
-    model.gradient_checkpointing_enable()
+    # Disable gradient checkpointing initially - we'll enable it after first successful batch
+    model.gradient_checkpointing_disable()
+    print("Gradient checkpointing temporarily disabled for initial batch")
     
     # Set up optimizer
     optimizer = torch.optim.AdamW(
@@ -268,7 +274,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             labels = batch["labels"].to(device)
             
             # Forward pass with mixed precision
-            with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
+            with autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=training_config.fp16 and torch.cuda.is_available()):
                 logits = model(input_ids)  # Model returns logits directly
                 
                 # Compute loss with repetition penalty
@@ -293,6 +299,11 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 
                 lr_scheduler.step()
                 optimizer.zero_grad()
+                
+                # Enable gradient checkpointing after first successful batch
+                if step == training_config.grad_accum_steps and not model.gradient_checkpointing:
+                    print("First batch completed successfully. Enabling gradient checkpointing.")
+                    model.gradient_checkpointing_enable()
                 
                 # Save checkpoint
                 if (step + 1) % training_config.save_interval == 0:
@@ -333,6 +344,27 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                                 best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
                                 print(f'New best validation loss: {val_loss:.4f}, saving to {best_path}')
                                 torch.save(checkpoint, best_path)
+                                
+                                # Also save in HF format
+                                try:
+                                    # Import here to avoid dependency issues
+                                    from save_model_hf import save_model_hf_format
+                                    
+                                    # Create HF directory
+                                    hf_dir = os.path.join(training_config.checkpoint_dir, "hf_model")
+                                    os.makedirs(hf_dir, exist_ok=True)
+                                    
+                                    # Save in HF format
+                                    print("Saving model in Hugging Face format...")
+                                    save_model_hf_format(
+                                        checkpoint_path=best_path,
+                                        output_dir=hf_dir,
+                                        tokenizer_path=tokenizer_path,
+                                        model_name="msingi1-swahili",
+                                    )
+                                    print(f"Model saved in HF format at {hf_dir}")
+                                except Exception as e:
+                                    print(f"Warning: Failed to save in HF format: {e}")
                     except Exception as e:
                         print(f'\nERROR saving checkpoint: {str(e)}')
                         print(f'Checkpoint directory: {training_config.checkpoint_dir}')
@@ -475,7 +507,7 @@ def evaluate(model, val_loader, config, device, fp16=False):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            with autocast(enabled=fp16 and torch.cuda.is_available()):
+            with autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=fp16 and torch.cuda.is_available()):
                 logits = model(input_ids)
                 
                 loss = torch.nn.functional.cross_entropy(
