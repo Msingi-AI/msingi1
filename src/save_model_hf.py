@@ -148,8 +148,18 @@ def save_model_hf_format(
         json.dump(special_tokens, f, indent=2)
     
     # Create a basic README.md/model card
-    # First create the model details section with f-strings
-    model_details = f"""
+    model_card = f"""---
+language:
+- sw
+license: apache-2.0
+tags:
+- swahili
+- text-generation
+- causal-lm
+datasets:
+- custom-swahili-corpus
+---
+
 # {model_name}
 
 Msingi1 is a decoder-only transformer language model optimized for Swahili text generation.
@@ -165,18 +175,14 @@ Msingi1 is a decoder-only transformer language model optimized for Swahili text 
 - **Parameters:** ~{(config.n_layer * (12 * config.n_embd**2) + config.vocab_size * config.n_embd) // 1_000_000}M
 - **Context Length:** {config.max_position_embeddings}
 - **Training Data:** Custom Swahili corpus
-"""
 
-    # Create the usage section with the model name
-    hub_id = hub_model_id or model_name
-    usage_section = f"""
 ## Usage
 
 ```python
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-tokenizer = AutoTokenizer.from_pretrained("{hub_id}")
-model = AutoModelForCausalLM.from_pretrained("{hub_id}")
+tokenizer = AutoTokenizer.from_pretrained("{hub_model_id or model_name}")
+model = AutoModelForCausalLM.from_pretrained("{hub_model_id or model_name}")
 
 # Generate text
 input_text = "Habari ya leo"
@@ -190,10 +196,7 @@ outputs = model.generate(
 )
 print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 ```
-"""
 
-    # The rest of the model card without f-strings
-    rest_of_card = """
 ## Training
 
 This model was trained on a custom Swahili corpus with approximately 40 million words.
@@ -213,27 +216,13 @@ If you use this model, please cite:
 @misc{msingi1-swahili,
   author = {{Msingi AI Team}},
   title = {Msingi1: A Swahili Language Model},
-  year = 2025,
+  year = {2025},
   publisher = {GitHub},
   journal = {GitHub repository},
   howpublished = {\\url{https://github.com/Msingi-AI/msingi1}}
 }
 ```
 """
-
-    # Combine all sections with the frontmatter
-    model_card = """---
-language:
-- sw
-license: apache-2.0
-tags:
-- swahili
-- text-generation
-- causal-lm
-datasets:
-- custom-swahili-corpus
----
-""" + model_details + usage_section + rest_of_card
     
     with open(os.path.join(output_dir, "README.md"), "w") as f:
         f.write(model_card)

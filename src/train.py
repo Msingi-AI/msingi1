@@ -6,15 +6,7 @@ from model import MsingiConfig, Msingi1
 from data_processor import load_dataset, prepare_dataset
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
-from torch.cuda.amp import GradScaler
-try:
-    # Try importing from torch.amp first (newer PyTorch)
-    from torch.amp import autocast
-    has_new_autocast = True
-except ImportError:
-    # Fall back to torch.cuda.amp (older PyTorch)
-    from torch.cuda.amp import autocast
-    has_new_autocast = False
+from torch.cuda.amp import GradScaler, autocast
 from transformers import PreTrainedTokenizerFast
 from tqdm import tqdm
 from pathlib import Path
@@ -61,98 +53,55 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    def __init__(
-        self,
-        num_epochs: int = 3,
-        batch_size: int = 4,
-        gradient_accumulation_steps: int = 16,
-        learning_rate: float = 3e-4,
-        weight_decay: float = 0.1,
-        max_grad_norm: float = 1.0,
-        warmup_iters: int = 1000,
-        lr_decay_iters: int = 20000,
-        min_lr: float = 3e-5,
-        eval_interval: int = 500,
-        eval_iters: int = 100,
-        save_interval: int = 500,
-        fp16: bool = True,
-        sequence_length: int = 1024,
-        checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints'),
-        detect_anomaly: bool = True
-    ):
-        self.num_epochs = num_epochs
-        self.batch_size = batch_size
-        self.gradient_accumulation_steps = gradient_accumulation_steps
-        self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
-        self.max_grad_norm = max_grad_norm
-        self.warmup_iters = warmup_iters
-        self.lr_decay_iters = lr_decay_iters
-        self.min_lr = min_lr
-        self.eval_interval = eval_interval
-        self.eval_iters = eval_iters
-        self.save_interval = save_interval
-        self.fp16 = fp16
-        self.sequence_length = sequence_length
-        self.checkpoint_dir = checkpoint_dir
-        self.detect_anomaly = detect_anomaly
+    num_epochs: int = 3  # Train for 3 epochs
+    batch_size: int = 4   # Using batch size 4
+    grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
+    learning_rate: float = 3e-4
+    weight_decay: float = 0.1
+    max_grad_norm: float = 1.0
+    warmup_iters: int = 1000
+    lr_decay_iters: int = 20000
+    min_lr: float = 3e-5
+    eval_interval: int = 500
+    eval_iters: int = 100
+    save_interval: int = 500  # Save twice per epoch (674 steps total)
+    fp16: bool = True
+    sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
+    checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
 
 class SwahiliDataset(Dataset):
-    def __init__(self, texts: List[str], tokenizer_path: str, max_length: int, batch_size: int = 10000):
+    def __init__(self, texts: List[str], tokenizer_path: str, max_length: int):
         # Load the trained tokenizer
         self.tokenizer = Tokenizer.from_file(tokenizer_path)
-        self.bos_id = self.tokenizer.token_to_id("<s>")
-        self.eos_id = self.tokenizer.token_to_id("</s>")
-        self.pad_id = self.tokenizer.token_to_id("<pad>")
-        self.max_length = max_length
-        
-        # Process texts in smaller batches to avoid memory issues
+
+        # Batch encode all texts for efficiency
+        print(f"Batch tokenizing {len(texts)} samples...")
+        encoded_batch = self.tokenizer.encode_batch(texts)
+        bos_id = self.tokenizer.token_to_id("<s>")
+        eos_id = self.tokenizer.token_to_id("</s>")
+        pad_id = self.tokenizer.token_to_id("<pad>")
+
         self.examples = []
-        total_texts = len(texts)
-        print(f"Processing {total_texts} samples in batches of {batch_size}...")
-        
-        for i in range(0, total_texts, batch_size):
-            batch_end = min(i + batch_size, total_texts)
-            current_batch = texts[i:batch_end]
-            print(f"Processing batch {i//batch_size + 1}/{(total_texts-1)//batch_size + 1} ({i}-{batch_end})")
-            
-            # Batch encode current chunk
-            encoded_batch = self.tokenizer.encode_batch(current_batch)
-            
-            # Process each encoded text
-            for encoded in tqdm(encoded_batch, desc=f"Processing batch {i//batch_size + 1}"):
-                self._process_encoded_text(encoded)
-                
-            # Free memory
-            del encoded_batch
-            import gc
-            gc.collect()
-            
-        print(f"Dataset preparation complete. Created {len(self.examples)} training examples.")
-    
-    def _process_encoded_text(self, encoded):
-        # Add BOS/EOS tokens
-        input_ids = [self.bos_id] + encoded.ids + [self.eos_id]
-        
-        if len(input_ids) <= self.max_length:
-            # Pad if needed
-            if len(input_ids) < self.max_length:
-                padding = [self.pad_id] * (self.max_length - len(input_ids))
-                input_ids = input_ids + padding
-            self.examples.append(input_ids)
-        else:
-            # For longer sequences, create overlapping chunks
-            stride = self.max_length * 3 // 4
-            for i in range(0, len(input_ids) - self.max_length + 1, stride):
-                sequence = input_ids[i:i + self.max_length]
-                # Ensure BOS at start
-                if i > 0 and sequence[0] != self.bos_id:
-                    sequence[0] = self.bos_id
-                # Ensure EOS at end for last chunk
-                if len(sequence) == self.max_length:
-                    if i + self.max_length >= len(input_ids) and sequence[-1] != self.eos_id:
-                        sequence[-1] = self.eos_id
-                    self.examples.append(sequence)
+        for encoded in tqdm(encoded_batch, desc="Processing tokenized samples"):
+            input_ids = [bos_id] + encoded.ids + [eos_id]
+            if len(input_ids) <= max_length:
+                # Pad if needed
+                if len(input_ids) < max_length:
+                    padding = [pad_id] * (max_length - len(input_ids))
+                    input_ids = input_ids + padding
+                self.examples.append(input_ids)
+            else:
+                stride = max_length * 3 // 4
+                for i in range(0, len(input_ids) - max_length + 1, stride):
+                    sequence = input_ids[i:i + max_length]
+                    # Ensure BOS at start
+                    if i > 0 and sequence[0] != bos_id:
+                        sequence[0] = bos_id
+                    # Ensure EOS at end for last chunk
+                    if len(sequence) == max_length:
+                        if i + max_length >= len(input_ids) and sequence[-1] != eos_id:
+                            sequence[-1] = eos_id
+                        self.examples.append(sequence)
     
     def __len__(self):
         return len(self.examples)
@@ -205,18 +154,12 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Set deterministic mode for reproducibility
-    torch.manual_seed(42)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(42)
-    
     # Initialize model
     model = Msingi1(model_config)
     model.to(device)
     
-    # Disable gradient checkpointing initially - we'll enable it after first successful batch
-    model.gradient_checkpointing_disable()
-    print("Gradient checkpointing temporarily disabled for initial batch")
+    # Enable gradient checkpointing
+    model.gradient_checkpointing_enable()
     
     # Set up optimizer
     optimizer = torch.optim.AdamW(
@@ -225,22 +168,12 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         weight_decay=training_config.weight_decay
     )
     
-    # Initialize mixed precision scaler
+    # Initialize mixed precision training
     scaler = None
     if training_config.fp16 and torch.cuda.is_available():
-        try:
-            if has_new_autocast:
-                # New PyTorch version (2.0+)
-                print("Using new GradScaler API with device_type")
-                from torch.amp import GradScaler
-                scaler = GradScaler('cuda')
-            else:
-                # Older PyTorch version
-                print("Using legacy GradScaler API (no device_type support)")
-                scaler = GradScaler()
-        except Exception as e:
-            print(f"Warning: Failed to initialize GradScaler: {e}")
-            print("Continuing without mixed precision training")
+        print("Using mixed precision training")
+        from torch.cuda.amp import GradScaler
+        scaler = GradScaler()
     
     # Load checkpoint if it exists
     start_epoch = 0
@@ -285,186 +218,123 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if use_wandb:
         wandb.init(project="msingi1", config=vars(training_config))
     
-    # Add NaN detection hook
-    hooks = []
-    if training_config.detect_anomaly:
-        print("Adding NaN detection hooks")
-        
-        def nan_detection_hook(module, input, output):
-            # Only check a small sample (first element) to avoid CUDA errors
-            # and transfer to CPU for safe checking
-            if isinstance(output, torch.Tensor):
-                # Sample just a few values and move to CPU for checking
-                sample_size = min(10, output.numel())
-                if sample_size > 0:
-                    sample = output.flatten()[:sample_size].detach().cpu()
-                    if torch.isnan(sample).any() or torch.isinf(sample).any():
-                        print(f"NaN or Inf detected in {module.__class__.__name__} output")
-                        # Log additional info but don't break training
-                        print(f"  - Shape: {output.shape}")
-                        print(f"  - Device: {output.device}")
-                        print(f"  - Sample values: {sample.tolist()}")
-            return None
-        
-        # Add hooks to key modules
-        for name, module in model.named_modules():
-            if isinstance(module, (torch.nn.Linear, torch.nn.LayerNorm)):
-                hooks.append(module.register_forward_hook(nan_detection_hook))
-        
-        print(f"Added {len(hooks)} NaN detection hooks")
-    
     # Training loop
     global_step = 0
-    best_val_loss = float('inf')
-    first_batch_processed = False  # Track if we've processed the first batch
-    
-    print(f"Starting training for {training_config.num_epochs} epochs")
-    
     for epoch in range(start_epoch, training_config.num_epochs):
         model.train()
         total_loss = 0
+        optimizer.zero_grad()
         
-        # Disable gradient checkpointing for the first batch to avoid CUDA errors
-        if model.gradient_checkpointing and not first_batch_processed:
-            print("Temporarily disabling gradient checkpointing for first batch")
-            model.gradient_checkpointing_disable()
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_config.num_epochs}")
         
-        for batch_idx, batch in enumerate(train_loader):
-            # Move batch to device
+        for step, batch in enumerate(progress_bar):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            # Forward pass with mixed precision if enabled
-            if has_new_autocast:
-                # New PyTorch version (2.0+)
-                with autocast('cuda' if torch.cuda.is_available() else 'cpu', enabled=training_config.fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)
-                    
-                    loss = torch.nn.functional.cross_entropy(
-                        logits.view(-1, model_config.vocab_size),
-                        labels.view(-1),
-                        ignore_index=-100
-                    )
-                    
-                    # Scale loss for gradient accumulation
-                    loss = loss / training_config.gradient_accumulation_steps
-            else:
-                # Older PyTorch version
-                with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)
-                    
-                    loss = torch.nn.functional.cross_entropy(
-                        logits.view(-1, model_config.vocab_size),
-                        labels.view(-1),
-                        ignore_index=-100
-                    )
-                    
-                    # Scale loss for gradient accumulation
-                    loss = loss / training_config.gradient_accumulation_steps
+            # Forward pass with mixed precision
+            with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
+                logits = model(input_ids)  # Model returns logits directly
+                
+                # Compute loss with repetition penalty
+                loss = compute_loss_with_penalty(logits, labels)
+                loss = loss / training_config.grad_accum_steps
             
-            # Backward pass with mixed precision if enabled
+            # Backward pass with mixed precision
             if scaler is not None:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
             
-            # Update weights if we've accumulated enough gradients
-            if (batch_idx + 1) % training_config.gradient_accumulation_steps == 0:
+            if (step + 1) % training_config.grad_accum_steps == 0:
                 if scaler is not None:
-                    # Unscale gradients for clipping
                     scaler.unscale_(optimizer)
-                    
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
-                    
-                    # Update weights with scaled gradients
+                    clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
-                    # Clip gradients
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
-                    
-                    # Update weights
+                    clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
                     optimizer.step()
                 
-                # Zero gradients
+                lr_scheduler.step()
                 optimizer.zero_grad()
                 
-                # Update learning rate
-                lr_scheduler.step()
-                
-                # Enable gradient checkpointing after first successful batch
-                if not first_batch_processed and model.gradient_checkpointing:
-                    print("First batch processed successfully, enabling gradient checkpointing")
-                    model.gradient_checkpointing_enable()
-                    first_batch_processed = True
-                
-                # Increment global step
-                global_step += 1
-                
-                # Log metrics
-                if global_step % training_config.eval_interval == 0:
-                    lr = lr_scheduler.get_last_lr()[0]
-                    
-                    print(f"Epoch: {epoch}, Step: {global_step}, Loss: {loss.item() * training_config.gradient_accumulation_steps:.4f}, LR: {lr:.8f}")
-                    
-                    if use_wandb:
-                        wandb.log({
-                            "train/loss": loss.item() * training_config.gradient_accumulation_steps,
-                            "train/lr": lr,
-                            "train/epoch": epoch,
-                            "train/step": global_step,
-                        })
-                
-                # Validate
-                if global_step % training_config.eval_interval == 0:
-                    val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
-                    
-                    print(f"Validation Loss: {val_loss:.4f}")
-                    
-                    if use_wandb:
-                        wandb.log({
-                            "val/loss": val_loss,
-                            "val/epoch": epoch,
-                            "val/step": global_step,
-                        })
-                    
-                    # Save best model
-                    if val_loss < best_val_loss:
-                        best_val_loss = val_loss
-                        
-                        # Save best model
-                        save_checkpoint(
-                            model=model,
-                            optimizer=optimizer,
-                            scheduler=lr_scheduler,
-                            scaler=scaler,
-                            epoch=epoch,
-                            global_step=global_step,
-                            val_loss=val_loss,
-                            model_config=model_config,
-                            training_config=training_config,
-                            path=os.path.join(training_config.checkpoint_dir, "best_model.pt"),
-                        )
-                        
-                        print(f"Saved best model with validation loss: {val_loss:.4f}")
-                
                 # Save checkpoint
-                if global_step % training_config.save_interval == 0:
-                    save_checkpoint(
-                        model=model,
-                        optimizer=optimizer,
-                        scheduler=lr_scheduler,
-                        scaler=scaler,
-                        epoch=epoch,
-                        global_step=global_step,
-                        val_loss=None,
-                        model_config=model_config,
-                        training_config=training_config,
-                        path=os.path.join(training_config.checkpoint_dir, f"checkpoint_{global_step}.pt"),
-                    )
-                    
-                    print(f"Saved checkpoint at step {global_step}")
+                if (step + 1) % training_config.save_interval == 0:
+                    try:
+                        # Ensure checkpoint directory exists
+                        os.makedirs(training_config.checkpoint_dir, exist_ok=True)
+                        
+                        # Create checkpoint
+                        checkpoint = {
+                            'epoch': epoch,
+                            'model_state_dict': model.state_dict(),
+                            'optimizer_state_dict': optimizer.state_dict(),
+                            'best_val_loss': best_val_loss,
+                            'config': model_config,
+                        }
+                        if scaler is not None:
+                            checkpoint['scaler_state_dict'] = scaler.state_dict()
+                        
+                        # Save latest checkpoint
+                        checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
+                        print(f'\nSaving checkpoint to {checkpoint_path}')
+                        torch.save(checkpoint, checkpoint_path)
+                        print('Checkpoint saved successfully')
+                        
+                        if val_texts:
+                            val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                            
+                            if use_wandb:
+                                wandb.log({
+                                    'val_loss': val_loss,
+                                    'epoch': epoch,
+                                    'global_step': global_step,
+                                })
+                            
+                            if val_loss < best_val_loss:
+                                best_val_loss = val_loss
+                                patience_counter = 0
+                                best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
+                                print(f'New best validation loss: {val_loss:.4f}, saving to {best_path}')
+                                torch.save(checkpoint, best_path)
+                            else:
+                                patience_counter += 1
+                                if patience_counter >= 3:
+                                    print(f'Early stopping triggered after {epoch + 1} epochs')
+                                    # Save final checkpoint before stopping
+                                    final_path = os.path.join(training_config.checkpoint_dir, 'final.pt')
+                                    print(f'Saving final model to {final_path}')
+                                    torch.save(checkpoint, final_path)
+                                    break
+                    except Exception as e:
+                        print(f'\nERROR saving checkpoint: {str(e)}')
+                        print(f'Checkpoint directory: {training_config.checkpoint_dir}')
+                        print(f'Directory exists: {os.path.exists(training_config.checkpoint_dir)}')
+                        print(f'Directory is writable: {os.access(training_config.checkpoint_dir, os.W_OK)}')
+                        raise
+            
+            total_loss += loss.item() * training_config.grad_accum_steps
+            
+            # Update progress bar
+            progress_bar.set_postfix({
+                'loss': total_loss / (step + 1),
+                'lr': optimizer.param_groups[0]['lr'],
+            })
+            global_step += 1
+            
+            # Evaluation
+            if val_texts and global_step % training_config.eval_interval == 0:
+                val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                
+                if use_wandb:
+                    wandb.log({
+                        'val_loss': val_loss,
+                        'train_loss': total_loss / (step + 1),
+                        'epoch': epoch,
+                        'global_step': global_step,
+                    })
+                
+                model.train()  # Back to training mode
         
         try:
             os.makedirs(training_config.checkpoint_dir, exist_ok=True)
@@ -481,31 +351,15 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 'val_loss': val_loss if val_texts else None,
                 'global_step': global_step,
             }
-            torch.save(checkpoint, latest_ckpt_path)
-            print(f"Saved checkpoint after epoch {epoch+1} to {latest_ckpt_path}")
-            
-            # Save best model if we have a new best validation loss
-            if val_texts and val_loss < best_val_loss:
-                best_val_loss = val_loss
-                torch.save(checkpoint, best_ckpt_path)
-                print(f"New best validation loss: {val_loss:.4f}, saved to {best_ckpt_path}")
-                
-                # Also save in HF format
-                try:
-                    from save_model_hf import save_model_hf_format
-                    
-                    hf_dir = os.path.join(training_config.checkpoint_dir, "hf_model")
-                    os.makedirs(hf_dir, exist_ok=True)
-                    
-                    save_model_hf_format(
-                        checkpoint_path=best_ckpt_path,
-                        output_dir=hf_dir,
-                        tokenizer_path=tokenizer_path,
-                        model_name="msingi1-swahili",
-                    )
-                    print(f"Model saved in HF format at {hf_dir}")
-                except Exception as e:
-                    print(f"Warning: Failed to save in HF format: {e}")
+            # Save latest checkpoint
+            torch.save(checkpoint, latest_ckpt_path, _use_new_zipfile_serialization=True, pickle_protocol=4)
+            print(f"[Checkpoint] Saved latest checkpoint: {latest_ckpt_path}")
+            # Save best checkpoint if improved
+            if val_texts:
+                if (not hasattr(train, 'best_val_loss')) or (val_loss < train.best_val_loss):
+                    train.best_val_loss = val_loss
+                    torch.save(checkpoint, best_ckpt_path, _use_new_zipfile_serialization=True, pickle_protocol=4)
+                    print(f"[Checkpoint] Saved best checkpoint: {best_ckpt_path} (val_loss={val_loss:.4f})")
         except Exception as e:
             print(f"[Checkpoint] Error saving checkpoint: {str(e)}")
         
@@ -519,53 +373,6 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             })
         
         print(f"Epoch {epoch+1}/{training_config.num_epochs} - Average Loss: {avg_loss:.4f}")
-    
-    # Save final model at the end of training
-    final_ckpt_path = os.path.join(training_config.checkpoint_dir, "final.pt")
-    try:
-        # Create final checkpoint
-        final_checkpoint = {
-            'epoch': training_config.num_epochs,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scaler_state_dict': scaler.state_dict() if scaler else None,
-            'config': model_config,
-            'training_config': training_config,
-            'val_loss': val_loss if val_texts else None,
-        }
-        
-        # Save in PyTorch format
-        torch.save(final_checkpoint, final_ckpt_path)
-        print(f"\nTraining complete! Saved final model to {final_ckpt_path}")
-        
-        # Save final model in HF format
-        try:
-            # Import here to avoid dependency issues
-            from save_model_hf import save_model_hf_format
-            
-            # Create HF directory
-            hf_final_dir = os.path.join(training_config.checkpoint_dir, "hf_model_final")
-            os.makedirs(hf_final_dir, exist_ok=True)
-            
-            # Save in HF format
-            print("Saving final model in Hugging Face format...")
-            save_model_hf_format(
-                checkpoint_path=final_ckpt_path,
-                output_dir=hf_final_dir,
-                tokenizer_path=tokenizer_path,
-                model_name="msingi1-swahili",
-            )
-            print(f"Final model saved in HF format at {hf_final_dir}")
-            print("\nYou can now load this model with the Hugging Face Transformers library:")
-            print("```python")
-            print("from transformers import AutoTokenizer, AutoModelForCausalLM")
-            print(f"\ntokenizer = AutoTokenizer.from_pretrained(\"{hf_final_dir}\")")
-            print(f"model = AutoModelForCausalLM.from_pretrained(\"{hf_final_dir}\")")
-            print("```")
-        except Exception as e:
-            print(f"Warning: Failed to save final model in HF format: {e}")
-    except Exception as e:
-        print(f"Error saving final model: {e}")
 
 def evaluate(model, val_loader, config, device, fp16=False):
     """Evaluate the model on validation data with optional mixed precision."""
@@ -578,26 +385,14 @@ def evaluate(model, val_loader, config, device, fp16=False):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            if has_new_autocast:
-                # New PyTorch version (2.0+)
-                with autocast('cuda' if torch.cuda.is_available() else 'cpu', enabled=fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)
-                    
-                    loss = torch.nn.functional.cross_entropy(
-                        logits.view(-1, config.vocab_size),
-                        labels.view(-1),
-                        ignore_index=-100
-                    )
-            else:
-                # Older PyTorch version
-                with autocast(enabled=fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)
-                    
-                    loss = torch.nn.functional.cross_entropy(
-                        logits.view(-1, config.vocab_size),
-                        labels.view(-1),
-                        ignore_index=-100
-                    )
+            with autocast(enabled=fp16 and torch.cuda.is_available()):
+                logits = model(input_ids)
+                
+                loss = torch.nn.functional.cross_entropy(
+                    logits.view(-1, config.vocab_size),
+                    labels.view(-1),
+                    ignore_index=-100
+                )
             
             total_loss += loss.item() * labels.ne(-100).sum().item()
             total_tokens += labels.ne(-100).sum().item()
@@ -729,7 +524,7 @@ if __name__ == "__main__":
     training_config = TrainingConfig(
         num_epochs=3,  # Train for 3 epochs
         batch_size=4,  # Using batch size 4
-        gradient_accumulation_steps=16,  # Adjusted accumulation steps
+        grad_accum_steps=16,  # Adjusted accumulation steps
         learning_rate=3e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
@@ -741,8 +536,7 @@ if __name__ == "__main__":
         save_interval=1000,
         fp16=True,
         sequence_length=1024,
-        checkpoint_dir=drive_checkpoint_dir,  # Use Drive path
-        detect_anomaly=True,
+        checkpoint_dir=drive_checkpoint_dir  # Use Drive path
     )
     
     # Create checkpoint directory
