@@ -6,7 +6,15 @@ from model import MsingiConfig, Msingi1
 from data_processor import load_dataset, prepare_dataset
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
-from torch.cuda.amp import autocast, GradScaler
+from torch.cuda.amp import GradScaler
+try:
+    # Try importing from torch.amp first (newer PyTorch)
+    from torch.amp import autocast
+    has_new_autocast = True
+except ImportError:
+    # Fall back to torch.cuda.amp (older PyTorch)
+    from torch.cuda.amp import autocast
+    has_new_autocast = False
 from transformers import PreTrainedTokenizerFast
 from tqdm import tqdm
 from pathlib import Path
@@ -274,12 +282,22 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             labels = batch["labels"].to(device)
             
             # Forward pass with mixed precision
-            with autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=training_config.fp16 and torch.cuda.is_available()):
-                logits = model(input_ids)  # Model returns logits directly
-                
-                # Compute loss with repetition penalty
-                loss = compute_loss_with_penalty(logits, labels)
-                loss = loss / training_config.grad_accum_steps
+            if has_new_autocast:
+                # New PyTorch version (2.0+)
+                with autocast('cuda' if torch.cuda.is_available() else 'cpu', enabled=training_config.fp16 and torch.cuda.is_available()):
+                    logits = model(input_ids)  # Model returns logits directly
+                    
+                    # Compute loss with repetition penalty
+                    loss = compute_loss_with_penalty(logits, labels)
+                    loss = loss / training_config.grad_accum_steps
+            else:
+                # Older PyTorch version
+                with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
+                    logits = model(input_ids)  # Model returns logits directly
+                    
+                    # Compute loss with repetition penalty
+                    loss = compute_loss_with_penalty(logits, labels)
+                    loss = loss / training_config.grad_accum_steps
             
             # Backward pass with mixed precision
             if scaler is not None:
@@ -507,14 +525,26 @@ def evaluate(model, val_loader, config, device, fp16=False):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            with autocast(device_type="cuda" if torch.cuda.is_available() else "cpu", enabled=fp16 and torch.cuda.is_available()):
-                logits = model(input_ids)
-                
-                loss = torch.nn.functional.cross_entropy(
-                    logits.view(-1, config.vocab_size),
-                    labels.view(-1),
-                    ignore_index=-100
-                )
+            if has_new_autocast:
+                # New PyTorch version (2.0+)
+                with autocast('cuda' if torch.cuda.is_available() else 'cpu', enabled=fp16 and torch.cuda.is_available()):
+                    logits = model(input_ids)
+                    
+                    loss = torch.nn.functional.cross_entropy(
+                        logits.view(-1, config.vocab_size),
+                        labels.view(-1),
+                        ignore_index=-100
+                    )
+            else:
+                # Older PyTorch version
+                with autocast(enabled=fp16 and torch.cuda.is_available()):
+                    logits = model(input_ids)
+                    
+                    loss = torch.nn.functional.cross_entropy(
+                        logits.view(-1, config.vocab_size),
+                        labels.view(-1),
+                        ignore_index=-100
+                    )
             
             total_loss += loss.item() * labels.ne(-100).sum().item()
             total_tokens += labels.ne(-100).sum().item()
