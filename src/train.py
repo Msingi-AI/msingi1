@@ -6,9 +6,7 @@ from model import MsingiConfig, Msingi1
 from data_processor import load_dataset, prepare_dataset
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
-from torch.cuda.amp import GradScaler
-from torch.cuda.amp import autocast as autocast_new
-from torch.autocast import autocast as autocast_old
+from torch.cuda.amp import GradScaler, autocast
 from transformers import PreTrainedTokenizerFast
 from tqdm import tqdm
 from pathlib import Path
@@ -270,20 +268,12 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             labels = batch["labels"].to(device)
             
             # Forward pass with mixed precision
-            try:
-                with autocast_new(device_type='cuda', enabled=training_config.fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)  # Model returns logits directly
-                    
-                    # Compute loss with repetition penalty
-                    loss = compute_loss_with_penalty(logits, labels)
-                    loss = loss / training_config.grad_accum_steps
-            except TypeError:
-                with autocast_old(enabled=training_config.fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)  # Model returns logits directly
-                    
-                    # Compute loss with repetition penalty
-                    loss = compute_loss_with_penalty(logits, labels)
-                    loss = loss / training_config.grad_accum_steps
+            with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
+                logits = model(input_ids)  # Model returns logits directly
+                
+                # Compute loss with repetition penalty
+                loss = compute_loss_with_penalty(logits, labels)
+                loss = loss / training_config.grad_accum_steps
             
             # Backward pass with mixed precision
             if scaler is not None:
@@ -485,24 +475,14 @@ def evaluate(model, val_loader, config, device, fp16=False):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            try:
-                with autocast_new(device_type='cuda', enabled=fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)
-                    
-                    loss = torch.nn.functional.cross_entropy(
-                        logits.view(-1, config.vocab_size),
-                        labels.view(-1),
-                        ignore_index=-100
-                    )
-            except TypeError:
-                with autocast_old(enabled=fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)
-                    
-                    loss = torch.nn.functional.cross_entropy(
-                        logits.view(-1, config.vocab_size),
-                        labels.view(-1),
-                        ignore_index=-100
-                    )
+            with autocast(enabled=fp16 and torch.cuda.is_available()):
+                logits = model(input_ids)
+                
+                loss = torch.nn.functional.cross_entropy(
+                    logits.view(-1, config.vocab_size),
+                    labels.view(-1),
+                    ignore_index=-100
+                )
             
             total_loss += loss.item() * labels.ne(-100).sum().item()
             total_tokens += labels.ne(-100).sum().item()
