@@ -268,6 +268,25 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if use_wandb:
         wandb.init(project="msingi1", config=vars(training_config))
     
+    # Register a forward hook to detect NaN values
+    nan_detected = [False]  # Use a list for mutable state
+    
+    def check_nan_hook(module, input_tensor, output_tensor):
+        # Only check on CPU to avoid CUDA errors
+        with torch.no_grad():
+            # Move a small sample to CPU for checking
+            if isinstance(output_tensor, torch.Tensor):
+                sample = output_tensor[:1, :1, :5] if output_tensor.dim() > 2 else output_tensor[:1, :5] if output_tensor.dim() > 1 else output_tensor[:5]
+                sample = sample.detach().cpu()
+                if torch.isnan(sample).any():
+                    print(f"NaN detected in output of {module.__class__.__name__}")
+                    nan_detected[0] = True
+    
+    # Add hooks to key modules
+    for name, module in model.named_modules():
+        if isinstance(module, (torch.nn.Linear, torch.nn.LayerNorm)):
+            module.register_forward_hook(check_nan_hook)
+    
     # Training loop
     global_step = 0
     for epoch in range(start_epoch, training_config.num_epochs):
