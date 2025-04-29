@@ -5,30 +5,54 @@ import math
 from typing import Optional
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+    """Precompute the frequency tensor for complex exponentials (rotary embeddings)."""
+    # Make sure we're using CPU tensors here to avoid CUDA initialization issues
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    t = torch.arange(end, device=freqs.device)
+    t = torch.arange(end, dtype=torch.float)
     freqs = torch.outer(t, freqs).float()
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
-    return freqs_cis
+    # Use complex exponential instead of polar for better compatibility
+    freqs_cos = torch.cos(freqs)
+    freqs_sin = torch.sin(freqs)
+    return torch.stack([freqs_cos, freqs_sin], dim=-1)
 
-def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Apply rotary embeddings to input tensors using precomputed frequencies"""
-    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
-    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply rotary embeddings to input tensors using precomputed frequencies.
+    This implementation avoids complex number operations for better compatibility."""
+    # Extract batch size, sequence length, n_heads, and head_dim
+    batch, seq_len, n_heads, head_dim = xq.shape
+    dim = head_dim // 2
     
-    # Expand freqs_cis to match the batch size and number of heads
-    # freqs_cis shape: [seq_len, dim//2]
-    # xq_ shape: [batch, seq_len, n_heads, dim//2]
-    seq_len = xq_.shape[1]
-    freqs_cis = freqs_cis[:seq_len]  # [seq_len, dim//2]
+    # Make sure we only use the needed frequencies
+    freqs = freqs[:seq_len]
     
     # Reshape for broadcasting
-    freqs_cis = freqs_cis.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
+    # [seq_len, dim, 2] -> [1, seq_len, 1, dim, 2]
+    freqs = freqs.unsqueeze(0).unsqueeze(2)
     
-    # Apply rotation
-    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
-    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
-    return xq_out.type_as(xq), xk_out.type_as(xk)
+    # Reshape query and key for rotation
+    # [batch, seq_len, n_heads, head_dim] -> [batch, seq_len, n_heads, dim, 2]
+    xq_2d = xq.reshape(batch, seq_len, n_heads, dim, 2)
+    xk_2d = xk.reshape(batch, seq_len, n_heads, dim, 2)
+    
+    # Extract cos and sin components
+    cos = freqs[..., 0]  # [1, seq_len, 1, dim]
+    sin = freqs[..., 1]  # [1, seq_len, 1, dim]
+    
+    # Apply rotation using real-valued math
+    # For complex number z = a + bi, rotation by e^(i*theta) = cos(theta) + i*sin(theta) gives:
+    # z_rotated = (a*cos - b*sin) + (a*sin + b*cos)i
+    xq_out = torch.stack([
+        xq_2d[..., 0] * cos - xq_2d[..., 1] * sin,
+        xq_2d[..., 1] * cos + xq_2d[..., 0] * sin
+    ], dim=-1)
+    
+    xk_out = torch.stack([
+        xk_2d[..., 0] * cos - xk_2d[..., 1] * sin,
+        xk_2d[..., 1] * cos + xk_2d[..., 0] * sin
+    ], dim=-1)
+    
+    # Reshape back to original shape
+    return xq_out.reshape(batch, seq_len, n_heads, head_dim), xk_out.reshape(batch, seq_len, n_heads, head_dim)
 
 class MsingiConfig:
     def __init__(
@@ -79,7 +103,7 @@ class MultiHeadAttention(nn.Module):
         
         self.dropout = nn.Dropout(config.dropout)
         
-    def forward(self, hidden_states, freqs_cis, attention_mask=None):
+    def forward(self, hidden_states, freqs, attention_mask=None):
         batch_size, seq_length = hidden_states.shape[:2]
         
         # Project and reshape
@@ -88,7 +112,7 @@ class MultiHeadAttention(nn.Module):
         v = self.v_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
         
         # Apply rotary embeddings
-        q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
+        q, k = apply_rotary_emb(q, k, freqs=freqs)
         
         # Transpose for attention computation
         q = q.transpose(1, 2)  # (batch, n_heads, seq_len, head_dim)
@@ -123,9 +147,9 @@ class MsingiBlock(nn.Module):
         self.ln1 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         self.ln2 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         
-    def forward(self, hidden_states, freqs_cis, attention_mask=None):
+    def forward(self, hidden_states, freqs, attention_mask=None):
         # Pre-norm architecture
-        attn_output = self.attention(self.ln1(hidden_states), freqs_cis, attention_mask)
+        attn_output = self.attention(self.ln1(hidden_states), freqs, attention_mask)
         hidden_states = hidden_states + attn_output
         hidden_states = hidden_states + self.mlp(self.ln2(hidden_states))
         return hidden_states
@@ -142,11 +166,13 @@ class Msingi1(nn.Module):
         # Initialize weights
         self.apply(self._init_weights)
         
-        # Compute rotary position embeddings
-        self.freqs_cis = precompute_freqs_cis(
+        # Compute rotary position embeddings and register as buffer
+        # This ensures it's properly saved and moved to the right device
+        freqs_cis = precompute_freqs_cis(
             self.config.n_embd // self.config.n_head,
             self.config.max_position_embeddings,
         )
+        self.register_buffer("freqs_cis", freqs_cis)
         
         # Language modeling head
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
@@ -164,10 +190,8 @@ class Msingi1(nn.Module):
         self.gradient_checkpointing = False
         
     def forward(self, input_ids, attention_mask=None):
+        # Get embeddings
         hidden_states = self.embeddings(input_ids)
-        
-        # Move freqs_cis to the same device as hidden states
-        freqs_cis = self.freqs_cis.to(hidden_states.device)
         
         # Process through transformer layers with optional gradient checkpointing
         if self.gradient_checkpointing and self.training:
@@ -179,13 +203,16 @@ class Msingi1(nn.Module):
             for layer in self.layers:
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(layer),
-                    hidden_states, freqs_cis, attention_mask
+                    hidden_states, self.freqs_cis, attention_mask
                 )
         else:
             for layer in self.layers:
-                hidden_states = layer(hidden_states, freqs_cis, attention_mask)
+                hidden_states = layer(hidden_states, self.freqs_cis, attention_mask)
         
+        # Final layer norm
         hidden_states = self.ln_f(hidden_states)
+        
+        # Language modeling head
         logits = self.lm_head(hidden_states)
         
         return logits
