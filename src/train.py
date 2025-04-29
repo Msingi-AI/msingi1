@@ -53,20 +53,20 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 5  # Train for 5 epochs with small dataset
-    batch_size: int = 8   # Larger batch size for faster training
-    grad_accum_steps: int = 8  # Adjusted for effective batch size of 64
-    learning_rate: float = 5e-4  # Slightly higher learning rate for faster convergence
+    num_epochs: int = 3  # Train for 3 epochs
+    batch_size: int = 4   # Using batch size 4
+    grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
+    learning_rate: float = 3e-4
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
-    warmup_iters: int = 100  # Shorter warmup for small dataset
-    lr_decay_iters: int = 2000  # Shorter decay for small dataset
-    min_lr: float = 5e-5
-    eval_interval: int = 100  # More frequent evaluation
-    eval_iters: int = 50
-    save_interval: int = 200  # More frequent checkpoints
+    warmup_iters: int = 1000
+    lr_decay_iters: int = 20000
+    min_lr: float = 3e-5
+    eval_interval: int = 500
+    eval_iters: int = 100
+    save_interval: int = 500  # Save twice per epoch (674 steps total)
     fp16: bool = True
-    sequence_length: int = 512  # Shorter sequence length for small dataset
+    sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
     checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
 
 class SwahiliDataset(Dataset):
@@ -78,19 +78,27 @@ class SwahiliDataset(Dataset):
         self.pad_id = self.tokenizer.token_to_id("<pad>")
         self.max_length = max_length
         
-        # Process all texts at once (for small dataset)
+        # Process texts in smaller batches to avoid memory issues
         self.examples = []
         total_texts = len(texts)
-        print(f"Processing {total_texts} samples directly (no batching for small dataset)...")
+        print(f"Processing {total_texts} samples in batches of {batch_size}...")
         
-        # Encode all texts in one batch
-        print("Tokenizing dataset...")
-        encoded_batch = self.tokenizer.encode_batch(texts)
-        
-        # Process each encoded text
-        print("Processing tokenized texts...")
-        for encoded in tqdm(encoded_batch, desc="Processing samples"):
-            self._process_encoded_text(encoded)
+        for i in range(0, total_texts, batch_size):
+            batch_end = min(i + batch_size, total_texts)
+            current_batch = texts[i:batch_end]
+            print(f"Processing batch {i//batch_size + 1}/{(total_texts-1)//batch_size + 1} ({i}-{batch_end})")
+            
+            # Batch encode current chunk
+            encoded_batch = self.tokenizer.encode_batch(current_batch)
+            
+            # Process each encoded text
+            for encoded in tqdm(encoded_batch, desc=f"Processing batch {i//batch_size + 1}"):
+                self._process_encoded_text(encoded)
+                
+            # Free memory
+            del encoded_batch
+            import gc
+            gc.collect()
             
         print(f"Dataset preparation complete. Created {len(self.examples)} training examples.")
     
@@ -173,14 +181,8 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     model = Msingi1(model_config)
     model.to(device)
     
-    # Print model size
-    total_params = sum(p.numel() for p in model.parameters())
-    print(f"Model initialized with {total_params:,} parameters (~{total_params/1_000_000:.1f}M)")
-    
-    # Enable gradient checkpointing if needed
-    if model_config.gradient_checkpointing:
-        model.gradient_checkpointing_enable()
-        print("Gradient checkpointing enabled")
+    # Enable gradient checkpointing
+    model.gradient_checkpointing_enable()
     
     # Set up optimizer
     optimizer = torch.optim.AdamW(
@@ -558,18 +560,6 @@ def prepare_dataset(texts: List[str]) -> List[str]:
 if __name__ == "__main__":
     print(f"Current working directory: {os.getcwd()}")
     
-    # Set up smaller model config for 7.7MB dataset
-    model_config = MsingiConfig(
-        vocab_size=32000,
-        max_position_embeddings=512,
-        n_layer=6,               # 6 layers instead of 12
-        n_head=8,                # 8 attention heads
-        n_embd=512,              # 512 embedding dimension
-        intermediate_size=1024,  # Smaller FFN size
-        dropout=0.1,
-        gradient_checkpointing=True
-    )
-    
     data_dir = os.path.join(DRIVE_PATH, "data")
     train_path = os.path.join(data_dir, "train.txt")
     val_path = os.path.join(data_dir, "valid.txt")
@@ -602,6 +592,19 @@ if __name__ == "__main__":
     
     print(f"Loaded {len(train_texts)} training samples and {len(val_texts)} validation samples")
     
+    # Initialize model config with target architecture
+    model_config = MsingiConfig(
+        vocab_size=32000,
+        max_position_embeddings=1024,
+        n_embd=512,
+        n_layer=8,
+        n_head=8,
+        intermediate_size=2048,
+        dropout=0.1,
+        rotary_emb=True,
+        gradient_checkpointing=True
+    )
+    
     # Create checkpoint directory in Google Drive
     drive_checkpoint_dir = os.path.join(DRIVE_PATH, 'checkpoints')
     os.makedirs(drive_checkpoint_dir, exist_ok=True)
@@ -609,20 +612,20 @@ if __name__ == "__main__":
     
     # Initialize training config with Drive path
     training_config = TrainingConfig(
-        num_epochs=5,  # Train for 5 epochs
-        batch_size=8,  # Larger batch size for faster training
-        grad_accum_steps=8,  # Adjusted accumulation steps
-        learning_rate=5e-4,
+        num_epochs=3,  # Train for 3 epochs
+        batch_size=4,  # Using batch size 4
+        grad_accum_steps=16,  # Adjusted accumulation steps
+        learning_rate=3e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
-        warmup_iters=100,
-        lr_decay_iters=2000,
-        min_lr=5e-5,
-        eval_interval=100,
-        eval_iters=50,
-        save_interval=200,
+        warmup_iters=1000,
+        lr_decay_iters=20000,
+        min_lr=3e-5,
+        eval_interval=500,
+        eval_iters=100,
+        save_interval=1000,
         fp16=True,
-        sequence_length=512,
+        sequence_length=1024,
         checkpoint_dir=drive_checkpoint_dir  # Use Drive path
     )
     
