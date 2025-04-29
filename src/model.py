@@ -114,7 +114,7 @@ class MsingiConfig:
         n_embd=512,
         intermediate_size=2048,
         dropout=0.1,
-        rotary_emb=True,
+        rotary_emb=False,
         gradient_checkpointing=True,
         layer_norm_epsilon=1e-5,
         initializer_range=0.02,
@@ -136,7 +136,8 @@ class MsingiConfig:
         # Ensure hidden size is divisible by num_attention_heads
         assert n_embd % n_head == 0, "n_embd must be divisible by n_head"
         # Ensure hidden size is divisible by 2 for rotary embeddings
-        assert n_embd % 2 == 0, "n_embd must be even for rotary embeddings"
+        if rotary_emb:
+            assert n_embd % 2 == 0, "n_embd must be even for rotary embeddings"
 
 
 class MultiHeadAttention(nn.Module):
@@ -154,7 +155,7 @@ class MultiHeadAttention(nn.Module):
         
         self.dropout = nn.Dropout(config.dropout)
         
-    def forward(self, hidden_states, cos, sin, attention_mask=None):
+    def forward(self, hidden_states, cos=None, sin=None, attention_mask=None):
         """Forward pass of the MultiHeadAttention module.
         
         Args:
@@ -178,15 +179,16 @@ class MultiHeadAttention(nn.Module):
         k = k.view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
         v = v.view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
         
-        # Apply rotary embeddings to query and key
-        try:
-            q, k = apply_rotary_pos_emb(q, k, cos, sin)
-        except Exception as e:
-            print(f"Error in rotary embeddings: {e}")
-            print(f"q shape: {q.shape}, k shape: {k.shape}")
-            print(f"cos shape: {cos.shape}, sin shape: {sin.shape}")
-            # Fall back to no rotary embeddings
-            pass
+        if cos is not None and sin is not None:
+            # Apply rotary embeddings to query and key
+            try:
+                q, k = apply_rotary_pos_emb(q, k, cos, sin)
+            except Exception as e:
+                print(f"Error in rotary embeddings: {e}")
+                print(f"q shape: {q.shape}, k shape: {k.shape}")
+                print(f"cos shape: {cos.shape}, sin shape: {sin.shape}")
+                # Fall back to no rotary embeddings
+                pass
         
         # Transpose to [batch_size, n_heads, seq_length, head_dim]
         q = q.transpose(1, 2)
@@ -237,7 +239,7 @@ class MsingiBlock(nn.Module):
         self.ln1 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         self.ln2 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         
-    def forward(self, hidden_states, cos, sin, attention_mask=None):
+    def forward(self, hidden_states, cos=None, sin=None, attention_mask=None):
         """Forward pass of the transformer block.
         
         Args:
@@ -271,6 +273,9 @@ class Msingi1(nn.Module):
         # Create token embeddings
         self.embeddings = nn.Embedding(config.vocab_size, config.n_embd)
         
+        # Create position embeddings
+        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.n_embd)
+        
         # Create transformer layers
         self.layers = nn.ModuleList([MsingiBlock(config) for _ in range(config.n_layer)])
         
@@ -285,12 +290,13 @@ class Msingi1(nn.Module):
         
         # Precompute rotary embeddings with a very large safety margin
         # This avoids having to dynamically extend during forward passes
-        head_dim = config.n_embd // config.n_head
-        max_seq_len = max(2048, config.max_position_embeddings * 2)  # Use at least 2048 or double the config
-        print(f"Precomputing rotary embeddings for sequence length {max_seq_len}")
-        cos, sin = precompute_freqs_cis(head_dim, max_seq_len)
-        self.register_buffer("cos", cos, persistent=False)
-        self.register_buffer("sin", sin, persistent=False)
+        if config.rotary_emb:
+            head_dim = config.n_embd // config.n_head
+            max_seq_len = max(2048, config.max_position_embeddings * 2)  # Use at least 2048 or double the config
+            print(f"Precomputing rotary embeddings for sequence length {max_seq_len}")
+            cos, sin = precompute_freqs_cis(head_dim, max_seq_len)
+            self.register_buffer("cos", cos, persistent=False)
+            self.register_buffer("sin", sin, persistent=False)
         
         # Initialize weights
         self.apply(self._init_weights)
@@ -307,6 +313,9 @@ class Msingi1(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            torch.nn.init.ones_(module.weight)
+            torch.nn.init.zeros_(module.bias)
     
     def forward(self, input_ids, attention_mask=None):
         """Forward pass of the model.
@@ -321,25 +330,12 @@ class Msingi1(nn.Module):
         # Get input shape
         batch_size, seq_length = input_ids.shape
         
-        # Ensure sequence length doesn't exceed our precomputed frequencies
-        if seq_length > self.cos.shape[0]:
-            # Precompute new rotary embeddings with a larger size
-            max_seq_len = seq_length + 512  # Add much larger safety margin
-            print(f"Warning: Input sequence length {seq_length} exceeds precomputed frequency length {self.cos.shape[0]}")
-            print(f"Precomputing new rotary embeddings with length {max_seq_len}")
-            
-            # Compute on CPU first to avoid CUDA errors, then transfer
-            cos, sin = precompute_freqs_cis(
-                self.config.n_embd // self.config.n_head, 
-                max_seq_len, 
-                device="cpu"
-            )
-            # Move to the same device as input_ids
-            self.register_buffer("cos", cos.to(input_ids.device), persistent=False)
-            self.register_buffer("sin", sin.to(input_ids.device), persistent=False)
-        
         # Get embeddings
         hidden_states = self.embeddings(input_ids)
+        
+        # Add position embeddings
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+        hidden_states += self.position_embeddings(position_ids)
         
         # Create attention mask if provided
         if attention_mask is not None:
@@ -356,15 +352,15 @@ class Msingi1(nn.Module):
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     layer,
                     hidden_states,
-                    self.cos,
-                    self.sin,
+                    self.cos if hasattr(self, 'cos') else None,
+                    self.sin if hasattr(self, 'sin') else None,
                     attention_mask,
                 )
             else:
                 hidden_states = layer(
                     hidden_states,
-                    self.cos,
-                    self.sin,
+                    self.cos if hasattr(self, 'cos') else None,
+                    self.sin if hasattr(self, 'sin') else None,
                     attention_mask,
                 )
         
