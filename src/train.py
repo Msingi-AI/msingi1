@@ -2,23 +2,21 @@ import os
 import sys
 import torch
 import wandb
-import json
-import glob
-import time
 from model import MsingiConfig, Msingi1
 from data_processor import load_dataset, prepare_dataset
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
-from torch.cuda.amp import autocast
+from torch.cuda.amp import GradScaler, autocast
 from transformers import PreTrainedTokenizerFast
 from tqdm import tqdm
 from pathlib import Path
 import math
-from typing import Optional, List, Dict
+from typing import Optional, List
 import numpy as np
 from tokenizers import Tokenizer
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from dataclasses import dataclass
+
 
 # Drive path for checkpoints
 DRIVE_PATH = "/content/drive/MyDrive/msingi1"
@@ -56,146 +54,39 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 @dataclass
 class TrainingConfig:
     num_epochs: int = 3  # Train for 3 epochs
-    batch_size: int = 8   # Increased from 4 for faster training
-    grad_accum_steps: int = 8  # Reduced from 16 but maintains effective batch size of 64
+    batch_size: int = 4   # Using batch size 4
+    grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
     learning_rate: float = 3e-4
     weight_decay: float = 0.1
     max_grad_norm: float = 1.0
     warmup_iters: int = 1000
     lr_decay_iters: int = 20000
     min_lr: float = 3e-5
-    eval_interval: int = 1000  # Reduced validation frequency for speed
+    eval_interval: int = 500
     eval_iters: int = 100
-    save_interval: int = 100  # Reduced for debugging (was 500)
+    save_interval: int = 500  # Save twice per epoch (674 steps total)
     fp16: bool = True
-    sequence_length: int = 512  # Reduced from 1024 for faster training
+    sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
     checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
 
-class ChunkedSwahiliDataset(Dataset):
-    """Dataset that loads pre-processed chunks from disk to avoid memory issues."""
-    def __init__(self, data_dir: str, split: str = "train", cache_size: int = 5):
-        self.data_dir = data_dir
-        self.split = split
-        self.chunk_files = sorted(glob.glob(os.path.join(data_dir, f"{split}_chunk_*.pt")))
-        self.cache_size = cache_size
-        
-        if not self.chunk_files:
-            raise ValueError(f"No chunk files found in {data_dir} for split {split}")
-        
-        # Get total examples by loading metadata
-        metadata_file = os.path.join(data_dir, f"{split}_metadata.json")
-        if os.path.exists(metadata_file):
-            with open(metadata_file, 'r') as f:
-                metadata = json.load(f)
-                self.total_examples = metadata.get('total_examples', 0)
-        else:
-            # Count examples by loading each chunk
-            self.total_examples = 0
-            for chunk_file in tqdm(self.chunk_files, desc=f"Counting examples in {split} chunks"):
-                chunk = torch.load(chunk_file)
-                self.total_examples += len(chunk)
-            
-            # Save metadata for future use
-            os.makedirs(os.path.dirname(metadata_file), exist_ok=True)
-            with open(metadata_file, 'w') as f:
-                json.dump({'total_examples': self.total_examples}, f)
-        
-        print(f"Loaded {split} dataset with {self.total_examples} examples from {len(self.chunk_files)} chunks")
-        
-        # Create index mapping
-        self.chunk_indices = []
-        start_idx = 0
-        for i, chunk_file in enumerate(self.chunk_files):
-            # Get chunk size without loading the whole chunk
-            chunk = torch.load(chunk_file)
-            chunk_size = len(chunk)
-            self.chunk_indices.append((start_idx, start_idx + chunk_size, i))
-            start_idx += chunk_size
-            del chunk  # Free memory
-        
-        # Multi-chunk cache with timestamp for LRU eviction
-        self.chunk_cache = {}  # {chunk_idx: (chunk_data, last_access_time)}
-        import time
-        self.time = time  # Store time module for access timestamps
-    
-    def __len__(self):
-        return self.total_examples
-    
-    def __getitem__(self, idx):
-        # Find which chunk contains this index
-        for start_idx, end_idx, chunk_idx in self.chunk_indices:
-            if start_idx <= idx < end_idx:
-                # Load chunk if not already in cache
-                if chunk_idx not in self.chunk_cache:
-                    # If cache is full, remove least recently used chunk
-                    if len(self.chunk_cache) >= self.cache_size:
-                        # Find least recently used chunk
-                        lru_chunk_idx = min(
-                            self.chunk_cache.keys(), 
-                            key=lambda k: self.chunk_cache[k][1]
-                        )
-                        # Remove it from cache
-                        del self.chunk_cache[lru_chunk_idx]
-                    
-                    # Load chunk and add to cache with current timestamp
-                    self.chunk_cache[chunk_idx] = (
-                        torch.load(self.chunk_files[chunk_idx]), 
-                        self.time.time()
-                    )
-                else:
-                    # Update access timestamp
-                    self.chunk_cache[chunk_idx] = (
-                        self.chunk_cache[chunk_idx][0], 
-                        self.time.time()
-                    )
-                
-                # Get item from cached chunk
-                chunk_data = self.chunk_cache[chunk_idx][0]
-                local_idx = idx - start_idx
-                example = chunk_data[local_idx]
-                
-                input_ids = example[:-1]  # All tokens except last
-                labels = example[1:]      # All tokens except first
-                
-                return {
-                    "input_ids": torch.tensor(input_ids, dtype=torch.long),
-                    "labels": torch.tensor(labels, dtype=torch.long)
-                }
-        
-        raise IndexError(f"Index {idx} out of bounds for dataset of size {self.total_examples}")
-
 class SwahiliDataset(Dataset):
-    def __init__(self, texts: List[str], tokenizer_path: str, max_length: int, batch_size: int = 10000, 
-                 save_chunks: bool = True, output_dir: str = "processed_data", split: str = "train"):
+    def __init__(self, texts: List[str], tokenizer_path: str, max_length: int, batch_size: int = 10000):
         # Load the trained tokenizer
         self.tokenizer = Tokenizer.from_file(tokenizer_path)
         self.bos_id = self.tokenizer.token_to_id("<s>")
         self.eos_id = self.tokenizer.token_to_id("</s>")
         self.pad_id = self.tokenizer.token_to_id("<pad>")
         self.max_length = max_length
-        self.save_chunks = save_chunks
-        self.output_dir = output_dir
-        self.split = split
         
-        # Create output directory if saving chunks
-        if save_chunks:
-            os.makedirs(output_dir, exist_ok=True)
-            
         # Process texts in smaller batches to avoid memory issues
         self.examples = []
         total_texts = len(texts)
         print(f"Processing {total_texts} samples in batches of {batch_size}...")
         
-        total_examples = 0
-        chunk_idx = 0
-        
         for i in range(0, total_texts, batch_size):
             batch_end = min(i + batch_size, total_texts)
             current_batch = texts[i:batch_end]
             print(f"Processing batch {i//batch_size + 1}/{(total_texts-1)//batch_size + 1} ({i}-{batch_end})")
-            
-            # Reset examples for this batch
-            self.examples = []
             
             # Batch encode current chunk
             encoded_batch = self.tokenizer.encode_batch(current_batch)
@@ -203,35 +94,13 @@ class SwahiliDataset(Dataset):
             # Process each encoded text
             for encoded in tqdm(encoded_batch, desc=f"Processing batch {i//batch_size + 1}"):
                 self._process_encoded_text(encoded)
-            
-            # Save this batch as a chunk if requested
-            if save_chunks and self.examples:
-                chunk_path = os.path.join(output_dir, f"{split}_chunk_{chunk_idx}.pt")
-                torch.save(self.examples, chunk_path)
-                print(f"Saved {len(self.examples)} examples to {chunk_path}")
-                total_examples += len(self.examples)
-                chunk_idx += 1
-            
+                
             # Free memory
             del encoded_batch
             import gc
             gc.collect()
-        
-        # Save metadata
-        if save_chunks:
-            metadata_path = os.path.join(output_dir, f"{split}_metadata.json")
-            with open(metadata_path, 'w') as f:
-                json.dump({
-                    'total_examples': total_examples,
-                    'num_chunks': chunk_idx,
-                    'max_length': max_length,
-                    'tokenizer_path': tokenizer_path
-                }, f)
             
-            print(f"Dataset preparation complete. Created {total_examples} training examples in {chunk_idx} chunks.")
-            print(f"To use this dataset, initialize ChunkedSwahiliDataset with data_dir='{output_dir}' and split='{split}'")
-        else:
-            print(f"Dataset preparation complete. Created {len(self.examples)} training examples.")
+        print(f"Dataset preparation complete. Created {len(self.examples)} training examples.")
     
     def _process_encoded_text(self, encoded):
         # Add BOS/EOS tokens
@@ -300,8 +169,7 @@ def compute_loss_with_penalty(logits, labels, alpha=0.1):
     return total_loss
 
 def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optional[List[str]] = None,
-         training_config: Optional[TrainingConfig] = None, tokenizer_path: str = "tokenizer/tokenizer.json",
-         use_chunked_dataset: bool = True, processed_data_dir: str = "processed_data"):
+         training_config: Optional[TrainingConfig] = None, tokenizer_path: str = "tokenizer/tokenizer.json"):
     if training_config is None:
         training_config = TrainingConfig()
     
@@ -310,24 +178,11 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     print(f"Using device: {device}")
     
     # Initialize model
-    print("Initializing model...")
     model = Msingi1(model_config)
     model.to(device)
-    print("Model initialized and moved to device")
-    
-    # Enable torch.compile for faster training if available (PyTorch 2.0+)
-    if hasattr(torch, 'compile'):
-        try:
-            print("Attempting to use torch.compile() for faster training...")
-            model = torch.compile(model, mode="reduce-overhead")
-            print("Successfully enabled torch.compile() - training should be much faster")
-        except Exception as e:
-            print(f"Could not use torch.compile(): {str(e)}")
-            print("Continuing without compilation optimization")
     
     # Enable gradient checkpointing
     model.gradient_checkpointing_enable()
-    print("Gradient checkpointing enabled")
     
     # Set up optimizer
     optimizer = torch.optim.AdamW(
@@ -340,19 +195,21 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     scaler = None
     if training_config.fp16 and torch.cuda.is_available():
         print("Using mixed precision training")
+        from torch.cuda.amp import GradScaler
+        # Check PyTorch version to handle different GradScaler APIs
+        import pkg_resources
+        torch_version = pkg_resources.get_distribution("torch").version
+        print(f"PyTorch version: {torch_version}")
+        
+        # For PyTorch 2.0+, use device_type parameter if available
         try:
-            # Try the modern PyTorch 2.0+ API first
-            if hasattr(torch.amp, 'GradScaler'):
-                scaler = torch.amp.GradScaler('cuda')
-                print("Using modern PyTorch 2.0+ GradScaler API")
-            else:
-                # Fall back to legacy API
-                from torch.cuda.amp import GradScaler
-                scaler = GradScaler()
-                print("Using legacy CUDA GradScaler API")
-        except Exception as e:
-            print(f"Error initializing GradScaler: {str(e)}")
-            print("Continuing without mixed precision")
+            # Try the new API first
+            scaler = GradScaler(device_type='cuda')
+            print("Using new GradScaler API with device_type")
+        except TypeError:
+            # Fall back to old API if device_type is not supported
+            scaler = GradScaler()
+            print("Using legacy GradScaler API (no device_type support)")
     
     # Load checkpoint if it exists
     start_epoch = 0
@@ -378,74 +235,12 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     else:
         start_epoch = 0
     
-    # Process and save data in chunks if needed
-    processed_data_path = os.path.join(DRIVE_PATH, processed_data_dir) if DRIVE_PATH else processed_data_dir
-    os.makedirs(processed_data_path, exist_ok=True)
-    
-    # Check if processed data already exists
-    train_chunks_exist = len(glob.glob(os.path.join(processed_data_path, "train_chunk_*.pt"))) > 0
-    
-    if not train_chunks_exist or not use_chunked_dataset:
-        print("Processing training data and saving in chunks...")
-        # Process and save training data in chunks
-        train_dataset = SwahiliDataset(
-            train_texts, 
-            tokenizer_path, 
-            training_config.sequence_length, 
-            batch_size=10000,  # Process 10k samples at a time
-            save_chunks=True, 
-            output_dir=processed_data_path, 
-            split="train"
-        )
-    
-    # Load chunked dataset for training
-    if use_chunked_dataset and train_chunks_exist:
-        print(f"Loading training data from pre-processed chunks in {processed_data_path}...")
-        train_dataset = ChunkedSwahiliDataset(processed_data_path, split="train")
-    elif use_chunked_dataset:
-        print(f"Using newly processed chunked dataset from {processed_data_path}...")
-        train_dataset = ChunkedSwahiliDataset(processed_data_path, split="train")
-    
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=training_config.batch_size, 
-        shuffle=True,
-        num_workers=2,  # Enable parallel data loading
-        pin_memory=True,  # Speed up data transfer to GPU
-        prefetch_factor=2  # Prefetch batches
-    )
-    print(f"Created DataLoader with {len(train_dataset)} examples, batch size {training_config.batch_size}")
+    train_dataset = SwahiliDataset(train_texts, tokenizer_path, training_config.sequence_length)
+    train_loader = DataLoader(train_dataset, batch_size=training_config.batch_size, shuffle=True)
     
     if val_texts:
-        val_chunks_exist = len(glob.glob(os.path.join(processed_data_path, "val_chunk_*.pt"))) > 0
-        
-        if not val_chunks_exist or not use_chunked_dataset:
-            print("Processing validation data and saving in chunks...")
-            val_dataset = SwahiliDataset(
-                val_texts, 
-                tokenizer_path, 
-                training_config.sequence_length, 
-                batch_size=10000, 
-                save_chunks=True, 
-                output_dir=processed_data_path, 
-                split="val"
-            )
-        
-        if use_chunked_dataset and val_chunks_exist:
-            print(f"Loading validation data from pre-processed chunks in {processed_data_path}...")
-            val_dataset = ChunkedSwahiliDataset(processed_data_path, split="val")
-        elif use_chunked_dataset:
-            print(f"Using newly processed chunked dataset from {processed_data_path}...")
-            val_dataset = ChunkedSwahiliDataset(processed_data_path, split="val")
-        
-        val_loader = DataLoader(
-            val_dataset, 
-            batch_size=training_config.batch_size,
-            num_workers=2,
-            pin_memory=True,
-            prefetch_factor=2
-        )
-        print(f"Created validation DataLoader with {len(val_dataset)} examples")
+        val_dataset = SwahiliDataset(val_texts, tokenizer_path, training_config.sequence_length)
+        val_loader = DataLoader(val_dataset, batch_size=training_config.batch_size)
     
     num_training_steps = len(train_loader) * training_config.num_epochs
     lr_scheduler = get_cosine_schedule_with_warmup(
@@ -453,49 +248,32 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         num_warmup_steps=training_config.warmup_iters,
         num_training_steps=num_training_steps
     )
-
+    
     # Initialize wandb if available
     use_wandb = 'wandb' in sys.modules
     if use_wandb:
         wandb.init(project="msingi1", config=vars(training_config))
-
-    print("\n======== STARTING TRAINING LOOP ========\n")
+    
+    # Training loop
     global_step = 0
     for epoch in range(start_epoch, training_config.num_epochs):
-        print(f"\n=== Starting Epoch {epoch+1}/{training_config.num_epochs} ===\n")
         model.train()
         total_loss = 0
         optimizer.zero_grad()
-
-        # Log memory usage before training
-        if torch.cuda.is_available():
-            print(f"GPU memory before training: {torch.cuda.memory_allocated() / 1024**2:.2f} MB allocated, {torch.cuda.memory_reserved() / 1024**2:.2f} MB reserved")
-
+        
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_config.num_epochs}")
-
+        
         for step, batch in enumerate(progress_bar):
-            try:
-                # Log every 50 steps for debugging
-                if step % 50 == 0:
-                    print(f"Processing step {step}, global_step {global_step}")
-                    if torch.cuda.is_available():
-                        print(f"  GPU memory: {torch.cuda.memory_allocated() / 1024**2:.2f} MB allocated")
+            input_ids = batch["input_ids"].to(device)
+            labels = batch["labels"].to(device)
+            
+            # Forward pass with mixed precision
+            with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
+                logits = model(input_ids)  # Model returns logits directly
                 
-                input_ids = batch["input_ids"].to(device)
-                labels = batch["labels"].to(device)
-                
-                # Forward pass with mixed precision
-                with torch.cuda.amp.autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)  # Model returns logits directly
-                    
-                    # Compute loss with repetition penalty
-                    loss = compute_loss_with_penalty(logits, labels)
-                    loss = loss / training_config.grad_accum_steps
-            except Exception as e:
-                print(f"Error during training step {step}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                raise
+                # Compute loss with repetition penalty
+                loss = compute_loss_with_penalty(logits, labels)
+                loss = loss / training_config.grad_accum_steps
             
             # Backward pass with mixed precision
             if scaler is not None:
@@ -697,7 +475,7 @@ def evaluate(model, val_loader, config, device, fp16=False):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            with torch.cuda.amp.autocast(enabled=fp16 and torch.cuda.is_available()):
+            with autocast(enabled=fp16 and torch.cuda.is_available()):
                 logits = model(input_ids)
                 
                 loss = torch.nn.functional.cross_entropy(
@@ -835,19 +613,19 @@ if __name__ == "__main__":
     # Initialize training config with Drive path
     training_config = TrainingConfig(
         num_epochs=3,  # Train for 3 epochs
-        batch_size=8,  # Increased from 4 for faster training
-        grad_accum_steps=8,  # Reduced from 16 but maintains effective batch size of 64
+        batch_size=4,  # Using batch size 4
+        grad_accum_steps=16,  # Adjusted accumulation steps
         learning_rate=3e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
         warmup_iters=1000,
         lr_decay_iters=20000,
         min_lr=3e-5,
-        eval_interval=1000,
+        eval_interval=500,
         eval_iters=100,
         save_interval=1000,
         fp16=True,
-        sequence_length=512,
+        sequence_length=1024,
         checkpoint_dir=drive_checkpoint_dir  # Use Drive path
     )
     
