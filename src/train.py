@@ -61,21 +61,41 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
 @dataclass
 class TrainingConfig:
-    num_epochs: int = 3  # Train for 3 epochs
-    batch_size: int = 4   # Using batch size 4
-    grad_accum_steps: int = 16  # Adjusted to maintain effective batch size
-    learning_rate: float = 3e-4
-    weight_decay: float = 0.1
-    max_grad_norm: float = 1.0
-    warmup_iters: int = 1000
-    lr_decay_iters: int = 20000
-    min_lr: float = 3e-5
-    eval_interval: int = 500
-    eval_iters: int = 100
-    save_interval: int = 500  # Save twice per epoch (674 steps total)
-    fp16: bool = True
-    sequence_length: int = 1024  # Keeping reduced sequence length for memory efficiency
-    checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints')  # Save to Drive
+    def __init__(
+        self,
+        num_epochs: int = 3,
+        batch_size: int = 4,
+        gradient_accumulation_steps: int = 16,
+        learning_rate: float = 3e-4,
+        weight_decay: float = 0.1,
+        max_grad_norm: float = 1.0,
+        warmup_iters: int = 1000,
+        lr_decay_iters: int = 20000,
+        min_lr: float = 3e-5,
+        eval_interval: int = 500,
+        eval_iters: int = 100,
+        save_interval: int = 500,
+        fp16: bool = True,
+        sequence_length: int = 1024,
+        checkpoint_dir: str = os.path.join(DRIVE_PATH, 'checkpoints'),
+        detect_anomaly: bool = True
+    ):
+        self.num_epochs = num_epochs
+        self.batch_size = batch_size
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.max_grad_norm = max_grad_norm
+        self.warmup_iters = warmup_iters
+        self.lr_decay_iters = lr_decay_iters
+        self.min_lr = min_lr
+        self.eval_interval = eval_interval
+        self.eval_iters = eval_iters
+        self.save_interval = save_interval
+        self.fp16 = fp16
+        self.sequence_length = sequence_length
+        self.checkpoint_dir = checkpoint_dir
+        self.detect_anomaly = detect_anomaly
 
 class SwahiliDataset(Dataset):
     def __init__(self, texts: List[str], tokenizer_path: str, max_length: int, batch_size: int = 10000):
@@ -205,25 +225,22 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         weight_decay=training_config.weight_decay
     )
     
-    # Initialize mixed precision training
+    # Initialize mixed precision scaler
     scaler = None
     if training_config.fp16 and torch.cuda.is_available():
-        print("Using mixed precision training")
-        from torch.cuda.amp import GradScaler
-        # Check PyTorch version to handle different GradScaler APIs
-        import pkg_resources
-        torch_version = pkg_resources.get_distribution("torch").version
-        print(f"PyTorch version: {torch_version}")
-        
-        # For PyTorch 2.0+, use device_type parameter if available
         try:
-            # Try the new API first
-            scaler = GradScaler(device_type='cuda')
-            print("Using new GradScaler API with device_type")
-        except TypeError:
-            # Fall back to old API if device_type is not supported
-            scaler = GradScaler()
-            print("Using legacy GradScaler API (no device_type support)")
+            if has_new_autocast:
+                # New PyTorch version (2.0+)
+                print("Using new GradScaler API with device_type")
+                from torch.amp import GradScaler
+                scaler = GradScaler('cuda')
+            else:
+                # Older PyTorch version
+                print("Using legacy GradScaler API (no device_type support)")
+                scaler = GradScaler()
+        except Exception as e:
+            print(f"Warning: Failed to initialize GradScaler: {e}")
+            print("Continuing without mixed precision training")
     
     # Load checkpoint if it exists
     start_epoch = 0
@@ -268,169 +285,186 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     if use_wandb:
         wandb.init(project="msingi1", config=vars(training_config))
     
-    # Register a forward hook to detect NaN values
-    nan_detected = [False]  # Use a list for mutable state
-    
-    def check_nan_hook(module, input_tensor, output_tensor):
-        # Only check on CPU to avoid CUDA errors
-        with torch.no_grad():
-            # Move a small sample to CPU for checking
-            if isinstance(output_tensor, torch.Tensor):
-                sample = output_tensor[:1, :1, :5] if output_tensor.dim() > 2 else output_tensor[:1, :5] if output_tensor.dim() > 1 else output_tensor[:5]
-                sample = sample.detach().cpu()
-                if torch.isnan(sample).any():
-                    print(f"NaN detected in output of {module.__class__.__name__}")
-                    nan_detected[0] = True
-    
-    # Add hooks to key modules
-    for name, module in model.named_modules():
-        if isinstance(module, (torch.nn.Linear, torch.nn.LayerNorm)):
-            module.register_forward_hook(check_nan_hook)
+    # Add NaN detection hook
+    hooks = []
+    if training_config.detect_anomaly:
+        print("Adding NaN detection hooks")
+        
+        def nan_detection_hook(module, input, output):
+            # Only check a small sample (first element) to avoid CUDA errors
+            # and transfer to CPU for safe checking
+            if isinstance(output, torch.Tensor):
+                # Sample just a few values and move to CPU for checking
+                sample_size = min(10, output.numel())
+                if sample_size > 0:
+                    sample = output.flatten()[:sample_size].detach().cpu()
+                    if torch.isnan(sample).any() or torch.isinf(sample).any():
+                        print(f"NaN or Inf detected in {module.__class__.__name__} output")
+                        # Log additional info but don't break training
+                        print(f"  - Shape: {output.shape}")
+                        print(f"  - Device: {output.device}")
+                        print(f"  - Sample values: {sample.tolist()}")
+            return None
+        
+        # Add hooks to key modules
+        for name, module in model.named_modules():
+            if isinstance(module, (torch.nn.Linear, torch.nn.LayerNorm)):
+                hooks.append(module.register_forward_hook(nan_detection_hook))
+        
+        print(f"Added {len(hooks)} NaN detection hooks")
     
     # Training loop
     global_step = 0
+    best_val_loss = float('inf')
+    first_batch_processed = False  # Track if we've processed the first batch
+    
+    print(f"Starting training for {training_config.num_epochs} epochs")
+    
     for epoch in range(start_epoch, training_config.num_epochs):
         model.train()
         total_loss = 0
-        optimizer.zero_grad()
         
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_config.num_epochs}")
+        # Disable gradient checkpointing for the first batch to avoid CUDA errors
+        if model.gradient_checkpointing and not first_batch_processed:
+            print("Temporarily disabling gradient checkpointing for first batch")
+            model.gradient_checkpointing_disable()
         
-        for step, batch in enumerate(progress_bar):
+        for batch_idx, batch in enumerate(train_loader):
+            # Move batch to device
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            # Forward pass with mixed precision
+            # Forward pass with mixed precision if enabled
             if has_new_autocast:
                 # New PyTorch version (2.0+)
                 with autocast('cuda' if torch.cuda.is_available() else 'cpu', enabled=training_config.fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)  # Model returns logits directly
+                    logits = model(input_ids)
                     
-                    # Compute loss with repetition penalty
-                    loss = compute_loss_with_penalty(logits, labels)
-                    loss = loss / training_config.grad_accum_steps
+                    loss = torch.nn.functional.cross_entropy(
+                        logits.view(-1, model_config.vocab_size),
+                        labels.view(-1),
+                        ignore_index=-100
+                    )
+                    
+                    # Scale loss for gradient accumulation
+                    loss = loss / training_config.gradient_accumulation_steps
             else:
                 # Older PyTorch version
                 with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
-                    logits = model(input_ids)  # Model returns logits directly
+                    logits = model(input_ids)
                     
-                    # Compute loss with repetition penalty
-                    loss = compute_loss_with_penalty(logits, labels)
-                    loss = loss / training_config.grad_accum_steps
+                    loss = torch.nn.functional.cross_entropy(
+                        logits.view(-1, model_config.vocab_size),
+                        labels.view(-1),
+                        ignore_index=-100
+                    )
+                    
+                    # Scale loss for gradient accumulation
+                    loss = loss / training_config.gradient_accumulation_steps
             
-            # Backward pass with mixed precision
+            # Backward pass with mixed precision if enabled
             if scaler is not None:
                 scaler.scale(loss).backward()
             else:
                 loss.backward()
             
-            if (step + 1) % training_config.grad_accum_steps == 0:
+            # Update weights if we've accumulated enough gradients
+            if (batch_idx + 1) % training_config.gradient_accumulation_steps == 0:
                 if scaler is not None:
+                    # Unscale gradients for clipping
                     scaler.unscale_(optimizer)
-                    clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
+                    
+                    # Clip gradients
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
+                    
+                    # Update weights with scaled gradients
                     scaler.step(optimizer)
                     scaler.update()
                 else:
-                    clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
+                    # Clip gradients
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), training_config.max_grad_norm)
+                    
+                    # Update weights
                     optimizer.step()
                 
-                lr_scheduler.step()
+                # Zero gradients
                 optimizer.zero_grad()
                 
+                # Update learning rate
+                lr_scheduler.step()
+                
                 # Enable gradient checkpointing after first successful batch
-                if step == training_config.grad_accum_steps and not model.gradient_checkpointing:
-                    print("First batch completed successfully. Enabling gradient checkpointing.")
+                if not first_batch_processed and model.gradient_checkpointing:
+                    print("First batch processed successfully, enabling gradient checkpointing")
                     model.gradient_checkpointing_enable()
+                    first_batch_processed = True
+                
+                # Increment global step
+                global_step += 1
+                
+                # Log metrics
+                if global_step % training_config.eval_interval == 0:
+                    lr = lr_scheduler.get_last_lr()[0]
+                    
+                    print(f"Epoch: {epoch}, Step: {global_step}, Loss: {loss.item() * training_config.gradient_accumulation_steps:.4f}, LR: {lr:.8f}")
+                    
+                    if use_wandb:
+                        wandb.log({
+                            "train/loss": loss.item() * training_config.gradient_accumulation_steps,
+                            "train/lr": lr,
+                            "train/epoch": epoch,
+                            "train/step": global_step,
+                        })
+                
+                # Validate
+                if global_step % training_config.eval_interval == 0:
+                    val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
+                    
+                    print(f"Validation Loss: {val_loss:.4f}")
+                    
+                    if use_wandb:
+                        wandb.log({
+                            "val/loss": val_loss,
+                            "val/epoch": epoch,
+                            "val/step": global_step,
+                        })
+                    
+                    # Save best model
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        
+                        # Save best model
+                        save_checkpoint(
+                            model=model,
+                            optimizer=optimizer,
+                            scheduler=lr_scheduler,
+                            scaler=scaler,
+                            epoch=epoch,
+                            global_step=global_step,
+                            val_loss=val_loss,
+                            model_config=model_config,
+                            training_config=training_config,
+                            path=os.path.join(training_config.checkpoint_dir, "best_model.pt"),
+                        )
+                        
+                        print(f"Saved best model with validation loss: {val_loss:.4f}")
                 
                 # Save checkpoint
-                if (step + 1) % training_config.save_interval == 0:
-                    try:
-                        # Ensure checkpoint directory exists
-                        os.makedirs(training_config.checkpoint_dir, exist_ok=True)
-                        
-                        # Create checkpoint
-                        checkpoint = {
-                            'epoch': epoch,
-                            'model_state_dict': model.state_dict(),
-                            'optimizer_state_dict': optimizer.state_dict(),
-                            'best_val_loss': best_val_loss,
-                            'config': model_config,
-                        }
-                        if scaler is not None:
-                            checkpoint['scaler_state_dict'] = scaler.state_dict()
-                        
-                        # Save latest checkpoint
-                        checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
-                        print(f'\nSaving checkpoint to {checkpoint_path}')
-                        torch.save(checkpoint, checkpoint_path)
-                        print('Checkpoint saved successfully')
-                        
-                        if val_texts:
-                            val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
-                            
-                            if use_wandb:
-                                wandb.log({
-                                    'val_loss': val_loss,
-                                    'epoch': epoch,
-                                    'global_step': global_step,
-                                })
-                            
-                            if val_loss < best_val_loss:
-                                best_val_loss = val_loss
-                                patience_counter = 0
-                                best_path = os.path.join(training_config.checkpoint_dir, 'best.pt')
-                                print(f'New best validation loss: {val_loss:.4f}, saving to {best_path}')
-                                torch.save(checkpoint, best_path)
-                                
-                                # Also save in HF format
-                                try:
-                                    # Import here to avoid dependency issues
-                                    from save_model_hf import save_model_hf_format
-                                    
-                                    # Create HF directory
-                                    hf_dir = os.path.join(training_config.checkpoint_dir, "hf_model")
-                                    os.makedirs(hf_dir, exist_ok=True)
-                                    
-                                    # Save in HF format
-                                    print("Saving model in Hugging Face format...")
-                                    save_model_hf_format(
-                                        checkpoint_path=best_path,
-                                        output_dir=hf_dir,
-                                        tokenizer_path=tokenizer_path,
-                                        model_name="msingi1-swahili",
-                                    )
-                                    print(f"Model saved in HF format at {hf_dir}")
-                                except Exception as e:
-                                    print(f"Warning: Failed to save in HF format: {e}")
-                    except Exception as e:
-                        print(f'\nERROR saving checkpoint: {str(e)}')
-                        print(f'Checkpoint directory: {training_config.checkpoint_dir}')
-                        print(f'Directory exists: {os.path.exists(training_config.checkpoint_dir)}')
-                        print(f'Directory is writable: {os.access(training_config.checkpoint_dir, os.W_OK)}')
-                        raise
-            
-            total_loss += loss.item() * training_config.grad_accum_steps
-            
-            # Update progress bar
-            progress_bar.set_postfix({
-                'loss': total_loss / (step + 1),
-                'lr': optimizer.param_groups[0]['lr'],
-            })
-            global_step += 1
-            
-            # Evaluation
-            if val_texts and global_step % training_config.eval_interval == 0:
-                val_loss = evaluate(model, val_loader, model_config, device, training_config.fp16)
-                
-                if use_wandb:
-                    wandb.log({
-                        'val_loss': val_loss,
-                        'train_loss': total_loss / (step + 1),
-                        'epoch': epoch,
-                        'global_step': global_step,
-                    })
-                
-                model.train()  # Back to training mode
+                if global_step % training_config.save_interval == 0:
+                    save_checkpoint(
+                        model=model,
+                        optimizer=optimizer,
+                        scheduler=lr_scheduler,
+                        scaler=scaler,
+                        epoch=epoch,
+                        global_step=global_step,
+                        val_loss=None,
+                        model_config=model_config,
+                        training_config=training_config,
+                        path=os.path.join(training_config.checkpoint_dir, f"checkpoint_{global_step}.pt"),
+                    )
+                    
+                    print(f"Saved checkpoint at step {global_step}")
         
         try:
             os.makedirs(training_config.checkpoint_dir, exist_ok=True)
@@ -695,7 +729,7 @@ if __name__ == "__main__":
     training_config = TrainingConfig(
         num_epochs=3,  # Train for 3 epochs
         batch_size=4,  # Using batch size 4
-        grad_accum_steps=16,  # Adjusted accumulation steps
+        gradient_accumulation_steps=16,  # Adjusted accumulation steps
         learning_rate=3e-4,
         weight_decay=0.1,
         max_grad_norm=1.0,
@@ -707,7 +741,8 @@ if __name__ == "__main__":
         save_interval=1000,
         fp16=True,
         sequence_length=1024,
-        checkpoint_dir=drive_checkpoint_dir  # Use Drive path
+        checkpoint_dir=drive_checkpoint_dir,  # Use Drive path
+        detect_anomaly=True,
     )
     
     # Create checkpoint directory

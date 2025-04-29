@@ -14,80 +14,83 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, device="cpu
         device: Device to store the frequencies on
     
     Returns:
-        Complex tensor of shape [end, dim // 2] for applying rotary embeddings
+        Tuple of (cos, sin) tensors of shape [end, dim // 2]
     """
     # Make sure dim is even for rotary embeddings
     assert dim % 2 == 0, "Dimension must be even for rotary embeddings"
     
-    # Create position indices tensor
-    pos = torch.arange(end, device=device)
+    # Compute frequencies
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device).float() / dim))
     
-    # Create frequency indices tensor
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, device=device) / dim))
+    # Create position indices
+    t = torch.arange(end, device=device).float()
     
-    # Compute frequencies for each position and frequency index
-    # Ensure shape compatibility with broadcasting
-    freqs_cis = torch.outer(pos, freqs)
+    # Compute frequency matrix
+    freqs = torch.outer(t, freqs)
     
-    # Convert to complex exponentials
-    freqs_cis = torch.polar(torch.ones_like(freqs_cis), freqs_cis)
+    # Compute cos and sin directly (no complex numbers)
+    cos = torch.cos(freqs)
+    sin = torch.sin(freqs)
     
-    return freqs_cis
+    return cos, sin
 
 
-def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Apply rotary embeddings to input tensors using the given frequency tensor.
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None):
+    """Apply rotary position embeddings to query and key tensors.
     
     Args:
-        xq: Query states tensor of shape [batch_size, seq_length, n_heads, head_dim]
-        xk: Key states tensor of shape [batch_size, seq_length, n_heads, head_dim]
-        freqs_cis: Complex tensor of shape [seq_length, head_dim/2]
+        q: Query tensor of shape [batch_size, seq_length, n_heads, head_dim]
+        k: Key tensor of shape [batch_size, seq_length, n_heads, head_dim]
+        cos: Cosine part of the frequency tensor [seq_length, dim//2]
+        sin: Sine part of the frequency tensor [seq_length, dim//2]
+        position_ids: Optional position indices, defaults to None
         
     Returns:
-        Tuple of (query_states, key_states) with rotary embeddings applied
+        Tuple of rotated query and key tensors
     """
-    # Ensure all tensors are on the same device
-    if freqs_cis.device != xq.device:
-        freqs_cis = freqs_cis.to(xq.device)
+    # Get dimensions
+    batch, seq_len, n_heads, d_head = q.shape
     
-    # Extract tensor shapes
-    batch, seq_len, n_heads, head_dim = xq.shape
+    # Handle position_ids or use default sequence
+    if position_ids is None:
+        position_ids = torch.arange(seq_len, device=q.device)
     
-    # Reshape for broadcasting the rotary embeddings
-    xq_r = xq.reshape(batch, seq_len, n_heads, head_dim // 2, 2)
-    xk_r = xk.reshape(batch, seq_len, n_heads, head_dim // 2, 2)
+    # Get the correct part of cos and sin
+    if position_ids.max() >= cos.shape[0]:
+        # If sequence is longer than precomputed, dynamically extend
+        # This is safer than using modulo which could cause pattern repetition
+        max_pos = position_ids.max().item() + 1
+        print(f"Warning: Input sequence length {max_pos} exceeds precomputed frequency length {cos.shape[0]}")
+        print(f"Dynamically extending rotary embeddings to length {max_pos + 128}")
+        
+        # Compute extended rotary embeddings
+        extended_cos, extended_sin = precompute_freqs_cis(
+            d_head, max_pos + 128, device=q.device
+        )
+        
+        # Replace the buffers with extended versions
+        cos = extended_cos
+        sin = extended_sin
     
-    # Convert to complex values
-    xq_complex = torch.complex(xq_r[..., 0], xq_r[..., 1])
-    xk_complex = torch.complex(xk_r[..., 0], xk_r[..., 1])
+    # Get the cos and sin values for the positions
+    cos_pos = cos[position_ids]  # [seq_len, dim//2]
+    sin_pos = sin[position_ids]  # [seq_len, dim//2]
     
-    # Ensure freqs_cis has the right sequence length
-    # If input sequence is longer than precomputed, truncate
-    # If input sequence is shorter, use only what's needed
-    if seq_len > freqs_cis.shape[0]:
-        # Handle case where sequence length exceeds precomputed frequencies
-        # This should be avoided by ensuring freqs_cis is precomputed for max length
-        print(f"Warning: Input sequence length {seq_len} exceeds precomputed frequency length {freqs_cis.shape[0]}")
-        # Safely handle by using modulo to repeat frequencies
-        freqs_cis_effective = freqs_cis[torch.arange(seq_len, device=freqs_cis.device) % freqs_cis.shape[0]]
-    else:
-        # Normal case - just use the needed frequencies
-        freqs_cis_effective = freqs_cis[:seq_len]
+    # Reshape for broadcasting
+    cos_pos = cos_pos.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
+    sin_pos = sin_pos.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, dim//2]
     
-    # Apply rotary embeddings by complex multiplication
-    # Reshape freqs_cis for broadcasting
-    freqs_cis_reshaped = freqs_cis_effective.unsqueeze(0).unsqueeze(2)  # [1, seq_len, 1, head_dim//2]
+    # Split q and k into two parts along the last dimension
+    q1, q2 = q.chunk(2, dim=-1)
+    k1, k2 = k.chunk(2, dim=-1)
     
-    # Apply complex multiplication
-    xq_out = torch.view_as_real(xq_complex * freqs_cis_reshaped)
-    xk_out = torch.view_as_real(xk_complex * freqs_cis_reshaped)
+    # Apply rotation using the following identities:
+    # q_rot = q1 * cos - q2 * sin
+    # q_pass = q2 * cos + q1 * sin
+    q_rot = torch.cat([q1 * cos_pos - q2 * sin_pos, q2 * cos_pos + q1 * sin_pos], dim=-1)
+    k_rot = torch.cat([k1 * cos_pos - k2 * sin_pos, k2 * cos_pos + k1 * sin_pos], dim=-1)
     
-    # Reshape back to the original shape
-    xq_out = xq_out.reshape(batch, seq_len, n_heads, head_dim)
-    xk_out = xk_out.reshape(batch, seq_len, n_heads, head_dim)
-    
-    # Ensure output has the same dtype as input
-    return xq_out.type_as(xq), xk_out.type_as(xk)
+    return q_rot, k_rot
 
 
 class MsingiConfig:
@@ -140,12 +143,13 @@ class MultiHeadAttention(nn.Module):
         
         self.dropout = nn.Dropout(config.dropout)
         
-    def forward(self, hidden_states, freqs_cis, attention_mask=None):
+    def forward(self, hidden_states, cos, sin, attention_mask=None):
         """Forward pass of the MultiHeadAttention module.
         
         Args:
             hidden_states: Input tensor of shape [batch_size, seq_length, hidden_size]
-            freqs_cis: Precomputed frequencies for rotary embeddings
+            cos: Cosine part of the frequency tensor [seq_length, dim//2]
+            sin: Sine part of the frequency tensor [seq_length, dim//2]
             attention_mask: Optional attention mask
             
         Returns:
@@ -159,7 +163,7 @@ class MultiHeadAttention(nn.Module):
         v = self.v_proj(hidden_states).view(batch_size, seq_length, self.num_attention_heads, self.head_dim)
         
         # Apply rotary embeddings
-        q, k = apply_rotary_emb(q, k, freqs_cis=freqs_cis)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin)
         
         # Transpose for attention computation
         q = q.transpose(1, 2)  # (batch, n_heads, seq_len, head_dim)
@@ -199,12 +203,13 @@ class MsingiBlock(nn.Module):
         self.ln1 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         self.ln2 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
         
-    def forward(self, hidden_states, freqs_cis, attention_mask=None):
+    def forward(self, hidden_states, cos, sin, attention_mask=None):
         """Forward pass of the transformer block.
         
         Args:
             hidden_states: Input tensor of shape [batch_size, seq_length, hidden_size]
-            freqs_cis: Precomputed frequencies for rotary embeddings
+            cos: Cosine part of the frequency tensor [seq_length, dim//2]
+            sin: Sine part of the frequency tensor [seq_length, dim//2]
             attention_mask: Optional attention mask
             
         Returns:
@@ -213,7 +218,7 @@ class MsingiBlock(nn.Module):
         # Pre-norm architecture with safety checks
         residual = hidden_states
         hidden_states = self.ln1(hidden_states)
-        attn_output = self.attention(hidden_states, freqs_cis, attention_mask)
+        attn_output = self.attention(hidden_states, cos, sin, attention_mask)
         hidden_states = residual + attn_output
         
         residual = hidden_states
@@ -247,9 +252,9 @@ class Msingi1(nn.Module):
         # Precompute rotary embeddings
         # Add a safety margin to max_seq_len to avoid index errors
         max_seq_len = config.max_position_embeddings + 128  # Add safety margin
-        self.register_buffer(
-            "freqs_cis", precompute_freqs_cis(config.n_embd, max_seq_len), persistent=False
-        )
+        cos, sin = precompute_freqs_cis(config.n_embd, max_seq_len)
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
         
         # Initialize weights
         self.apply(self._init_weights)
@@ -281,28 +286,56 @@ class Msingi1(nn.Module):
         batch_size, seq_length = input_ids.shape
         
         # Ensure sequence length doesn't exceed our precomputed frequencies
-        if seq_length > self.freqs_cis.shape[0]:
-            # Dynamically extend freqs_cis if needed
-            max_seq_len = seq_length + 128  # Add safety margin
-            self.freqs_cis = precompute_freqs_cis(
-                self.config.n_embd, max_seq_len, device=input_ids.device
-            )
-            print(f"Extended rotary embeddings to length {max_seq_len}")
+        if seq_length > self.cos.shape[0]:
+            # Dynamically extend rotary embeddings if needed
+            max_seq_len = seq_length + 256  # Add larger safety margin
+            print(f"Warning: Input sequence length {seq_length} exceeds precomputed frequency length {self.cos.shape[0]}")
+            print(f"Dynamically extending rotary embeddings to length {max_seq_len}")
+            
+            try:
+                # Compute extended rotary embeddings on the same device as input_ids
+                cos, sin = precompute_freqs_cis(
+                    self.config.n_embd // self.config.n_head, 
+                    max_seq_len, 
+                    device=input_ids.device
+                )
+                # Register the new buffers
+                self.register_buffer("cos", cos, persistent=False)
+                self.register_buffer("sin", sin, persistent=False)
+            except Exception as e:
+                print(f"Error extending rotary embeddings: {e}")
+                print("Falling back to original embeddings with position_ids modulo")
+                # We'll handle this in the layer forward passes
         
         # Get embeddings
         hidden_states = self.embeddings(input_ids)
         
-        # Process through transformer layers
-        if self.gradient_checkpointing and self.training:
-            # Use gradient checkpointing to save memory during training
-            for layer in self.layers:
+        # Create attention mask if provided
+        if attention_mask is not None:
+            # Convert mask from [batch_size, seq_length] to [batch_size, 1, 1, seq_length]
+            # with 1 for tokens to attend to and 0 for tokens to ignore
+            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+            attention_mask = attention_mask.to(dtype=hidden_states.dtype)  # fp16 compatibility
+            attention_mask = (1.0 - attention_mask) * torch.finfo(hidden_states.dtype).min
+        
+        # Apply transformer layers
+        for i, layer in enumerate(self.layers):
+            if self.gradient_checkpointing and self.training:
+                # Use gradient checkpointing to save memory during training
                 hidden_states = torch.utils.checkpoint.checkpoint(
-                    layer, hidden_states, self.freqs_cis, attention_mask
+                    layer,
+                    hidden_states,
+                    self.cos,
+                    self.sin,
+                    attention_mask,
                 )
-        else:
-            # Standard forward pass
-            for layer in self.layers:
-                hidden_states = layer(hidden_states, self.freqs_cis, attention_mask)
+            else:
+                hidden_states = layer(
+                    hidden_states,
+                    self.cos,
+                    self.sin,
+                    attention_mask,
+                )
         
         # Apply final layer norm
         hidden_states = self.ln_f(hidden_states)
