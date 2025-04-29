@@ -268,7 +268,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             labels = batch["labels"].to(device)
             
             # Forward pass with mixed precision
-            with autocast(enabled=training_config.fp16 and torch.cuda.is_available()):
+            with autocast(device_type='cuda', enabled=training_config.fp16 and torch.cuda.is_available()):
                 logits = model(input_ids)  # Model returns logits directly
                 
                 # Compute loss with repetition penalty
@@ -475,7 +475,7 @@ def evaluate(model, val_loader, config, device, fp16=False):
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
-            with autocast(enabled=fp16 and torch.cuda.is_available()):
+            with autocast(device_type='cuda', enabled=fp16 and torch.cuda.is_available()):
                 logits = model(input_ids)
                 
                 loss = torch.nn.functional.cross_entropy(
