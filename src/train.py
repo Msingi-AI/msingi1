@@ -267,7 +267,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                         
                         # Create checkpoint
                         checkpoint = {
-                            'epoch': epoch,
+                            'epoch': epoch + 1,  # Save the next epoch number instead of current
                             'model_state_dict': model.state_dict(),
                             'optimizer_state_dict': optimizer.state_dict(),
                             'best_val_loss': best_val_loss,
