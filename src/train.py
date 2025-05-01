@@ -180,6 +180,8 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
     start_epoch = 0
     best_val_loss = float('inf')
     patience_counter = 0
+    global_step = 0
+    resume_step = 0
     checkpoint_path = os.path.join(training_config.checkpoint_dir, 'latest.pt')
     if checkpoint_path and os.path.exists(checkpoint_path):
         print(f'Loading checkpoint from {checkpoint_path}')
@@ -192,13 +194,21 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
             if 'scaler_state_dict' in checkpoint and scaler is not None:
                 scaler.load_state_dict(checkpoint['scaler_state_dict'])
             start_epoch = checkpoint['epoch']
-            print(f'Resuming from epoch {start_epoch}')
+            if 'global_step' in checkpoint:
+                global_step = checkpoint['global_step']
+            if 'step_in_epoch' in checkpoint:
+                resume_step = checkpoint['step_in_epoch']
+            print(f'Resuming from epoch {start_epoch}, step {resume_step} (global step {global_step})')
         except Exception as e:
             print(f"Error loading checkpoint: {str(e)}")
             print("Starting from scratch")
             start_epoch = 0
+            resume_step = 0
+            global_step = 0
     else:
         start_epoch = 0
+        resume_step = 0
+        global_step = 0
     
     train_dataset = SwahiliDataset(train_texts, tokenizer_path, training_config.sequence_length)
     train_loader = DataLoader(train_dataset, batch_size=training_config.batch_size, shuffle=True)
@@ -220,7 +230,6 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         wandb.init(project="msingi1", config=vars(training_config))
     
     # Training loop
-    global_step = 0
     for epoch in range(start_epoch, training_config.num_epochs):
         model.train()
         total_loss = 0
@@ -228,7 +237,17 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
         
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{training_config.num_epochs}")
         
+        # Skip to the resume step if needed
+        skip_steps = 0
+        if epoch == start_epoch and resume_step > 0:
+            skip_steps = resume_step
+            print(f"Skipping to step {skip_steps} in epoch {epoch+1}")
+        
         for step, batch in enumerate(progress_bar):
+            # Skip steps that were already processed before the checkpoint
+            if step < skip_steps:
+                continue
+                
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
             
@@ -272,6 +291,8 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                             'optimizer_state_dict': optimizer.state_dict(),
                             'best_val_loss': best_val_loss,
                             'config': model_config,
+                            'global_step': global_step,
+                            'step_in_epoch': step,
                         }
                         if scaler is not None:
                             checkpoint['scaler_state_dict'] = scaler.state_dict()
@@ -351,6 +372,7 @@ def train(model_config: MsingiConfig, train_texts: List[str], val_texts: Optiona
                 'training_config': training_config,
                 'val_loss': val_loss if val_texts else None,
                 'global_step': global_step,
+                'step_in_epoch': step,
             }
             # Save latest checkpoint
             torch.save(checkpoint, latest_ckpt_path, _use_new_zipfile_serialization=True, pickle_protocol=4)
