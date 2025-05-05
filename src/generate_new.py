@@ -115,7 +115,7 @@ def main():
     print("Tokenizer loaded successfully")
     
     # Load model
-    checkpoint_path = "checkpoints/best.pt"  # You can change this to use different checkpoints
+    checkpoint_path = "checkpoints/best .pt"  # Using the checkpoint with space in filename
     if not os.path.exists(checkpoint_path):
         print(f"Error: Checkpoint not found at {checkpoint_path}")
         return

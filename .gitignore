@@ -190,5 +190,9 @@ data/
 Swahili Corpus/
 hcs-na-v2/
 
-#Original Dataset
-best.pt
+# Model checkpoints
+checkpoints/*.pt
+checkpoints/"best .pt"
+checkpoints/latest.pt
+checkpoints/best.pt
+*.pt
