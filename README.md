@@ -1,5 +1,5 @@
 # Msingi1: Scaling Language Modeling for Swahili Through Small-Scale Pretraining
-
+ 
 ## Research Overview
 
 Msingi1 ("Foundation" in Swahili) documents our ongoing research journey in developing decoder-only transformer language models for Swahili. This project is an experimental exploration of foundation models for low-resource African languages, with a focus on understanding the trade-offs between model size, training efficiency, and text generation quality.
