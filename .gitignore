@@ -189,10 +189,12 @@ tokenizer/*.vocab
 data/
 Swahili Corpus/
 hcs-na-v2/
-
+swa_wikipedia_2021_30K
+swa_community_2023
 # Model checkpoints
 checkpoints/*.pt
 checkpoints/"best .pt"
 checkpoints/latest.pt
 checkpoints/best.pt
 *.pt
+*.txt

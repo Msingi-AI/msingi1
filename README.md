@@ -32,14 +32,48 @@ Throughout this research journey, we've experimented with different model archit
 
 ## Dataset Characteristics
 
-Our experiments use a curated Swahili corpus with the following characteristics:
+Our experiments use a comprehensive Swahili corpus with the following characteristics:
 
-- **Total Size**: 254.4 MB
-- **Total Samples**: 1,693,227 lines of text
-- **Total Words**: 39,639,824
-- **Split Ratio**: 80/10/10 (train/validation/test)
+- **Total Size**: ~378 MB
+- **Total Samples**: 2,682,881 lines of text
+- **Total Words**: 63,107,167
+- **Split Ratio**: 90/10 (train/validation)
+- **Average Words Per Line**: 23.52
 
-The dataset includes diverse Swahili content from news articles, literature, government documents, and web content.
+The dataset includes diverse Swahili content from:
+- News articles and publications
+- Literature and books
+- Government documents and parliamentary proceedings
+- Wikipedia articles
+- Contemporary community content and FAQs
+- Mobile service documentation
+- Web content
+- Biblical text (Swahili Bible)
+
+### Dataset Citations
+
+The Msingi1 language model was trained on a combined corpus created from the following sources:
+
+1. **Swahili Corpus**
+   - Masasi, Noel; Masua, Bernard (2024), "Swahili Corpus", Mendeley Data, V2, doi: 10.17632/d4yhn5b9n6.2
+
+2. **Helsinki Corpus of Swahili (HCS-NA-v2)**
+   - Arvi Hurskainen (2004). Helsinki Corpus of Swahili. 2nd edition: Helsinki Corpus of Swahili, Version 2.0 (HCS 2.0) 2004-09-30. University of Helsinki, Institute for Asian and African Studies.
+
+3. **Swahili Wikipedia 2021**
+   - Wikimedia Foundation. (2021). Swahili Wikipedia. Retrieved 2021 from https://sw.wikipedia.org/
+
+4. **Swahili Community 2023**
+   - Various Swahili news and community websites. (2023). Collected from sources including Mwananchi.co.tz, BBC Swahili, VOA Swahili, and Vodacom Tanzania.
+### Dataset Citations
+
+The Msingi1 language model was trained on a combined corpus created from the following two primary sources:
+
+1. **Swahili Corpus**
+   - Masasi, Noel; Masua, Bernard (2024), "Swahili Corpus", Mendeley Data, V2, doi: 10.17632/d4yhn5b9n6.2
+
+2. **Helsinki Corpus of Swahili (HCS-NA-v2)**
+   - Arvi Hurskainen (2004). Helsinki Corpus of Swahili. 2nd edition: Helsinki Corpus of Swahili, Version 2.0 (HCS 2.0) 2004-09-30. University of Helsinki, Institute for Asian and African Studies.
 
 ## Experimental Training Approach
 
