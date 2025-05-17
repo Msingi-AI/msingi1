@@ -1,4 +1,4 @@
-# Msingi1: Scaling Language Modeling for Swahili Through Small-Scale Pretraining
+# Msingi1: Scaling Language Modeling for Swahili Through Small-Scale Pretraining 
 
 **Kiplangat Korir**  
 MsingiAI  

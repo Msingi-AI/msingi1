@@ -1,4 +1,4 @@
-# Msingi1 Model Card
+# Msingi1 Model Card 
 
 ## Model Overview
 Msingi1 is a Swahili language model designed for text generation and understanding. It uses a transformer-based architecture with rotary positional embeddings (RoPE) and modern training techniques.
