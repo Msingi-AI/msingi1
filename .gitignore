@@ -198,3 +198,4 @@ checkpoints/latest.pt
 checkpoints/best.pt
 *.pt
 *.txt
+datasets/
