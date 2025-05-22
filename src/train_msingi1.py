@@ -32,8 +32,15 @@ except ImportError:
     WANDB_AVAILABLE = False
     print("Warning: wandb not available. Install with 'pip install wandb' for experiment tracking.")
 
-# Set PyTorch memory allocation config
+# Set PyTorch memory allocation and GPU optimization configs
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+os.environ['CUDA_LAUNCH_BLOCKING'] = '0'  # Better performance with async CUDA
+os.environ['TORCH_USE_CUDA_DSA'] = '1'  # Enable CUDA device synchronization attributes
+
+# Set torch backends for optimal performance
+torch.backends.cudnn.benchmark = True  # Use cuDNN auto-tuner
+torch.backends.cuda.matmul.allow_tf32 = True  # Allow TF32 on Ampere+ GPUs
+torch.backends.cudnn.allow_tf32 = True  # Allow TF32 for cuDNN
 
 class TrainingConfig:
     """Configuration for Msingi1 training"""
@@ -46,8 +53,8 @@ class TrainingConfig:
         
         # Training settings
         num_epochs: int = 3,
-        batch_size: int = 4,
-        grad_accum_steps: int = 16,  # Effective batch size = 64
+        batch_size: int = 8,
+        grad_accum_steps: int = 8,  # Effective batch size = 64
         sequence_length: int = 1024,
         
         # Optimization settings
@@ -338,16 +345,18 @@ def train(model_config, training_config):
         train_dataset,
         batch_size=training_config.batch_size,
         shuffle=True,
-        num_workers=2,
-        pin_memory=True
+        num_workers=4,  # Increased for dedicated GPU
+        pin_memory=True,
+        prefetch_factor=2  # Prefetch batches for better GPU utilization
     )
     
     valid_loader = DataLoader(
         valid_dataset,
         batch_size=training_config.batch_size,
         shuffle=False,
-        num_workers=2,
-        pin_memory=True
+        num_workers=4,  # Increased for dedicated GPU
+        pin_memory=True,
+        prefetch_factor=2  # Prefetch batches for better GPU utilization
     )
     
     # Set up optimizer
