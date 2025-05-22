@@ -27,8 +27,42 @@ Throughout this research journey, we've experimented with different model archit
 ### Research Focus Areas
 - **Efficient Attention Mechanisms**: Exploring optimizations for limited GPU resources
 - **Gradient Checkpointing**: Testing memory-efficient training approaches
-- **Tokenization Strategies**: Investigating ByteLevelBPE tokenization with 32K vocabulary for Swahili
+- **Tokenization Strategies**: Implementing ByteLevelBPE tokenization with 32K vocabulary for Swahili
 - **Text Generation Techniques**: Experimenting with repetition penalties and n-gram blocking
+
+## Tokenizer Implementation
+
+We've implemented a ByteLevelBPE tokenizer optimized for Swahili with the following specifications:
+
+- **Type**: ByteLevelBPE (Byte-Level Byte Pair Encoding)
+- **Vocabulary Size**: 32,000 tokens
+- **Special Tokens**: `<s>`, `</s>`, `<unk>`, `<pad>`, `<mask>`, `<sw>`
+- **Training Corpus**: 500,000 lines sampled from our 2.3M line training dataset
+- **Implementation**: Built using Hugging Face Tokenizers library
+
+The ByteLevelBPE approach was selected for Swahili because:
+1. It handles unknown words gracefully through character-level fallback
+2. It effectively captures morphological patterns in Swahili's agglutinative features
+3. It works well with subword regularities in Bantu languages
+4. It maintains compatibility with mainstream transformer architectures
+
+The tokenizer is available in both native format and Hugging Face Transformers format in the `tokenizer/` directory. It can be loaded and used as follows:
+
+```python
+from transformers import PreTrainedTokenizerFast
+
+# Load the tokenizer
+tokenizer = PreTrainedTokenizerFast.from_pretrained("tokenizer/swahili_bpe_32000/transformers")
+
+# Example usage
+text = "Ninapenda kusoma vitabu vya Kiswahili na kusikiliza muziki."
+encoded = tokenizer.encode(text)
+tokens = tokenizer.tokenize(text)
+decoded = tokenizer.decode(encoded)
+
+print(f"Tokens: {tokens}")
+print(f"Number of tokens: {len(tokens)}")
+```
 
 ## Dataset Characteristics
 
