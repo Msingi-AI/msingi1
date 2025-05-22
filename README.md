@@ -99,7 +99,15 @@ The Msingi1 language model was trained on a combined corpus created from the fol
 
 4. **Swahili Community 2023**
    - Various Swahili news and community websites. (2023). Collected from sources including Mwananchi.co.tz, BBC Swahili, VOA Swahili, and Vodacom Tanzania.
+### Dataset Citations
 
+The Msingi1 language model was trained on a combined corpus created from the following two primary sources:
+
+1. **Swahili Corpus**
+   - Masasi, Noel; Masua, Bernard (2024), "Swahili Corpus", Mendeley Data, V2, doi: 10.17632/d4yhn5b9n6.2
+
+2. **Helsinki Corpus of Swahili (HCS-NA-v2)**
+   - Arvi Hurskainen (2004). Helsinki Corpus of Swahili. 2nd edition: Helsinki Corpus of Swahili, Version 2.0 (HCS 2.0) 2004-09-30. University of Helsinki, Institute for Asian and African Studies.
 
 ## Experimental Training Approach
 

@@ -34,12 +34,13 @@ def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
 class MsingiConfig:
     def __init__(
         self,
-        vocab_size=50000,  # Updated to match tokenizer vocabulary size
-        max_position_embeddings=2048,  # Increased context length
-        n_layer=12,  # Increased from 8 to 12
-        n_head=12,  # Increased from 8 to 12
-        n_embd=768,  # Increased from 512 to 768
-        intermediate_size=3072,  # Increased from 2048 to 3072
+        vocab_size=32000,  # Set to match ByteLevelBPE tokenizer vocabulary size
+        max_position_embeddings=2048,  # Context length
+        n_layer=12,  # Number of transformer layers
+        n_head=12,  # Number of attention heads
+        n_embd=768,  # Embedding dimension
+        intermediate_size=3072,  # Feed-forward intermediate size
+        # Total params: ~110M (with 32K vocab)
         dropout=0.1,
         rotary_emb=True,
         gradient_checkpointing=True,
