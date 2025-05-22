@@ -48,22 +48,7 @@ class MsingiConfig:
         initializer_range=0.02,
         use_cache=True,
         use_flash_attn=False,  # New parameter for flash attention
-        use_mixed_precision=True,  # New parameter for mixed precision
-        special_tokens={  # New parameter for Swahili special tokens and document types
-            "sw_marker": "<sw>",
-            # Religious text markers
-            "bible_verse": "<verse>",
-            "bible_chapter": "<chapter>",
-            "quran_surah": "<surah>",
-            "quran_ayah": "<ayah>",
-            # Legal document markers
-            "constitution_article": "<article>",
-            "constitution_section": "<section>",
-            # General document structure
-            "document_title": "<title>",
-            "document_paragraph": "<para>",
-            "document_section": "<sec>"
-        }
+        use_mixed_precision=True  # New parameter for mixed precision
     ):
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
