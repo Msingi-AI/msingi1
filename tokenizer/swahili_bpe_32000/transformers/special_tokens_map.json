@@ -1,0 +1,10 @@
+{
+  "additional_special_tokens": [
+    "<sw>"
+  ],
+  "bos_token": "<s>",
+  "eos_token": "</s>",
+  "mask_token": "<mask>",
+  "pad_token": "<pad>",
+  "unk_token": "<unk>"
+}
