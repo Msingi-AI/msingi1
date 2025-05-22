@@ -6,12 +6,12 @@ Msingi1 is a Swahili language model designed for text generation and understandi
 ## Model Architecture
 
 ### Base Configuration
-- **Vocabulary Size**: 50,000 tokens
+- **Vocabulary Size**: 32,000 tokens
 - **Hidden Size**: 768 dimensions
 - **Number of Layers**: 12
 - **Attention Heads**: 12
 - **Intermediate Size**: 3,072
-- **Total Parameters**: ~85M
+- **Total Parameters**: ~110M
 - **Maximum Sequence Length**: 2,048 tokens
 - **Position Embeddings**: Rotary Position Embeddings (RoPE)
 

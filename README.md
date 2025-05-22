@@ -10,19 +10,20 @@ Msingi1 ("Foundation" in Swahili) documents our ongoing research journey in deve
 
 Throughout this research journey, we've experimented with different model architectures:
 
-### Initial Exploration (v1.0)
+### Current Architecture
 - 12 layers, 768 hidden size, 12 attention heads
-- Approximately 84M parameters
+- Approximately 110M parameters (with 32K vocabulary)
 - 2048 token context length
 - Rotary Position Embeddings (RoPE)
 - Pre-norm transformer architecture with GELU activation
+- Flash Attention optimization for efficient training
+- Gradient checkpointing for memory efficiency
 
-### Current Experiments (v1.5)
-- 8 layers, 512 hidden size, 8 attention heads
-- Approximately 28M parameters
-- 1024 token context length
-- Improved training dynamics with better initialization
-- Enhanced EOS token handling for better text completion
+### Previous Experiments
+- 8 layers, 512 hidden size, 8 attention heads (~28M parameters)
+- Various context length configurations (1024-2048 tokens)
+- Different initialization strategies and training dynamics
+- Exploration of EOS token handling for better text completion
 
 ### Research Focus Areas
 - **Efficient Attention Mechanisms**: Exploring optimizations for limited GPU resources
