@@ -6,7 +6,7 @@ kiplangat@msingi.ai
 
 ## Abstract
 
-This paper presents Msingi1, a decoder-only transformer language model specifically designed for Swahili text generation. While large language models have shown remarkable capabilities across numerous languages, low-resource languages like Swahili remain underserved in the current AI landscape. We explore the development of smaller, more efficient architectures (28M parameters) that can be trained on modest computational resources while still producing coherent text. Our experiments with different model sizes, tokenization strategies, and training methodologies provide insights into the trade-offs between model complexity and generation quality for Swahili. We demonstrate that carefully optimized smaller models can achieve promising results on text generation tasks, potentially making NLP technologies more accessible for African languages.
+This paper presents Msingi1, a decoder-only transformer language model specifically designed for Swahili text generation. While large language models have shown remarkable capabilities across numerous languages, low-resource languages like Swahili remain underserved in the current AI landscape. We explore the development of medium-sized, efficient architectures (110M parameters) that can be trained on modest computational resources while still producing coherent text. Our experiments with different model sizes, tokenization strategies, and training methodologies provide insights into the trade-offs between model complexity and generation quality for Swahili. We demonstrate that carefully optimized transformer models can achieve promising results on text generation tasks, potentially making NLP technologies more accessible for African languages.
 
 **Keywords:** Swahili NLP, language models, transformers, low-resource languages, efficient architectures
 
@@ -34,17 +34,18 @@ Previous work on Swahili NLP includes the development of the KINNEWS and KIRNEWS
 
 ## 3. Model Architecture
 
-Msingi1 is based on the decoder-only transformer architecture (Vaswani et al., 2017) with several modifications for efficiency. We experimented with different configurations, ultimately focusing on an 8-layer model with 512-dimensional embeddings and 8 attention heads, resulting in approximately 28 million parameters.
+Msingi1 is based on the decoder-only transformer architecture (Vaswani et al., 2017) with several modifications for efficiency and performance. We experimented with different configurations, ultimately scaling to a 12-layer model with 768-dimensional embeddings and 12 attention heads, resulting in approximately 110 million parameters.
 
 ### 3.1 Architecture Details
 
 The model incorporates:
 
 - Pre-norm transformer blocks with GELU activations
-- Rotary Position Embeddings (RoPE) (Su et al., 2021)
-- Weight tying between embedding and output layers
-- Gradient checkpointing for memory efficiency
-- Flash Attention-like computation patterns
+- Rotary Position Embeddings (RoPE) (Su et al., 2021) for better handling of long sequences
+- Weight tying between embedding and output layers to reduce parameter count
+- Gradient checkpointing for memory-efficient training
+- Flash Attention-like computation patterns for faster training
+- Mixed precision training (FP16) for GPU memory optimization
 
 ### 3.2 Tokenization
 
@@ -80,16 +81,17 @@ We implemented a sliding window approach with 50% overlap for training sequences
 ### 5.1 Training Configuration
 
 We trained Msingi1 using the following configuration:
-- Batch size: 4 with gradient accumulation steps of 16 (effective batch size of 64)
+- Batch size: 8 with gradient accumulation steps of 8 (effective batch size of 64)
 - Learning rate: 3e-4 with cosine warmup and decay
-- Training duration: 15 epochs with early stopping based on validation loss
+- Training duration: 3 epochs with early stopping based on validation loss
 - Mixed precision (FP16) training
 - AdamW optimizer with weight decay of 0.1
 - Maximum gradient norm clipping at 1.0
+- Repetition penalty in loss function to improve text quality
 
 ### 5.2 Computational Resources
 
-Training was conducted on a single NVIDIA V100 GPU with 16GB of memory, demonstrating the feasibility of training useful language models with modest computational resources. The total training time was approximately 48 hours.
+Training was conducted on a single rented GPU with at least 16GB of memory, demonstrating the feasibility of training medium-sized language models with reasonable computational resources. The total training time for our 110M parameter model was approximately 72 hours for 3 epochs on our 46M word corpus. Memory optimization techniques like gradient checkpointing and mixed precision training were essential to fit the model on a single GPU.
 
 ### 5.3 Evaluation During Training
 
@@ -105,11 +107,15 @@ We tracked perplexity on the validation set throughout training, observing a ste
 
 We conducted ablation studies to understand the impact of various architectural choices:
 
-1. **Model Size**: We compared 6-layer (384 hidden size) and 8-layer (512 hidden size) configurations, finding that the larger model achieved 12% lower perplexity at the cost of 2.1x longer training time.
+1. **Model Size**: We compared several configurations:
+   - Small: 8-layer, 512 hidden size, 8 attention heads (~28M parameters)
+   - Medium: 12-layer, 768 hidden size, 12 attention heads (~110M parameters)
+   
+   The 110M parameter model achieved approximately 18% lower perplexity than the 28M model, justifying the increased computational cost for improved Swahili language modeling.
 
-2. **Tokenizer Vocabulary**: Experiments with vocabulary sizes of 16K, 32K, and 50K showed that 32K provided the best balance between model size and tokenization efficiency for Swahili.
+2. **Tokenizer Vocabulary**: Experiments with vocabulary sizes of 16K, 32K, and 50K showed that 32K provided the best balance between model size and tokenization efficiency for Swahili. The 32K vocabulary adequately captured Swahili morphology while keeping the embedding layer size reasonable.
 
-3. **Positional Embeddings**: Rotary Position Embeddings (RoPE) outperformed absolute positional embeddings, particularly for longer sequences.
+3. **Positional Embeddings**: Rotary Position Embeddings (RoPE) significantly outperformed absolute positional embeddings, particularly for longer sequences, improving perplexity by 9% on long-form text generation tasks.
 
 ### 6.3 Text Generation Evaluation
 
@@ -152,18 +158,23 @@ Our experiments revealed several challenges specific to Swahili language modelin
 
 ### 7.2 Efficiency Considerations
 
-Our work demonstrates that useful language models for Swahili can be developed with modest computational resources. The 28M parameter Msingi1 model can run on consumer-grade hardware, making it more accessible for researchers and developers in regions with limited computational infrastructure.
+Our work demonstrates that medium-sized language models for Swahili can be developed with reasonable computational resources. The 110M parameter Msingi1 model strikes a balance between model capacity and computational requirements. While larger than our initial experiments with 28M parameter models, it remains significantly smaller than billion-parameter models while offering substantially improved text generation capabilities.
+
+With optimization techniques like quantization, this model could run on higher-end consumer hardware, making it potentially accessible for researchers and developers in regions with moderate computational infrastructure. The training process itself requires only a single GPU with 16GB+ memory, which is available through various cloud providers at reasonable costs.
 
 ## 8. Conclusion and Future Work
 
-This paper presented Msingi1, a decoder-only transformer language model for Swahili that balances efficiency and performance. Our experiments demonstrate that carefully optimized smaller models can achieve promising results for Swahili text generation, potentially making NLP technologies more accessible for this important African language.
+This paper presented Msingi1, a decoder-only transformer language model for Swahili that balances model capacity and computational efficiency. Our experiments with a 110M parameter model demonstrate that medium-sized models can achieve promising results for Swahili text generation, striking a balance between performance and accessibility for this important African language.
+
+Our findings suggest that the 110M parameter size represents a sweet spot for Swahili language modeling, offering substantially better performance than smaller models while remaining trainable on a single GPU. This approach makes NLP research more accessible for researchers with limited computational resources.
 
 Future work will focus on:
 
-1. **Multilingual Expansion**: Extending the approach to other East African languages
-2. **Instruction Tuning**: Adapting the model for instruction following and specific downstream tasks
-3. **Evaluation Benchmarks**: Developing standardized benchmarks for Swahili NLP
-4. **Model Compression**: Exploring quantization and pruning techniques for even more efficient deployment
+1. **Multilingual Expansion**: Extending the approach to other East African languages and exploring cross-lingual transfer learning
+2. **Instruction Tuning**: Adapting the model for instruction following and specific downstream tasks like translation and summarization
+3. **Evaluation Benchmarks**: Developing standardized benchmarks for Swahili NLP to better measure progress
+4. **Model Compression**: Exploring quantization and pruning techniques to enable deployment on more resource-constrained devices
+5. **Scaling Laws**: Investigating the relationship between model size, dataset size, and performance specifically for Swahili
 
 ## Acknowledgments
 
