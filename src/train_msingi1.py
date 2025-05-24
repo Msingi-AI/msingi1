@@ -10,6 +10,7 @@ import random
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union, Tuple
+import wandb
 
 # Model and data processing
 from model import MsingiConfig, Msingi1
