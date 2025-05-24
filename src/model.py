@@ -64,7 +64,6 @@ class MsingiConfig:
         self.use_cache = use_cache
         self.use_flash_attn = use_flash_attn
         self.use_mixed_precision = use_mixed_precision
-        self.special_tokens = special_tokens
         
         # Ensure hidden size is divisible by num_attention_heads
         assert n_embd % n_head == 0, "n_embd must be divisible by n_head"
