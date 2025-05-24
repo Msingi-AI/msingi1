@@ -11,8 +11,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union, Tuple
 import wandb
-
-# Model and data processing
 from model import MsingiConfig, Msingi1
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
@@ -54,8 +52,8 @@ class TrainingConfig:
         
         # Training settings
         num_epochs: int = 3,
-        batch_size: int = 8,
-        grad_accum_steps: int = 8,  # Effective batch size = 64
+        batch_size: int = 16,
+        grad_accum_steps: int = 4,  # Effective batch size = 64
         sequence_length: int = 1024,
         
         # Optimization settings
