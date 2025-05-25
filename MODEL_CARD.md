@@ -29,6 +29,16 @@ Msingi1 is a Swahili language model designed for text generation and understandi
 
 3. **Attention Mechanism**:
    - 12 attention heads
+   - Causal attention mask for autoregressive generation
+   - Optimized with flash attention-like computation
+
+4. **Tokenization**:
+   - **Primary Options**: ByteLevelBPE and Unigram tokenizers
+   - **Vocabulary Size**: 32,000 tokens for both tokenizers
+   - **Special Tokens**: `<s>`, `</s>`, `<unk>`, `<pad>`, `<mask>`, `<sw>`, `<eot>`
+   - **Training Corpus**: Full training dataset (383 MB, ~41.8M words)
+   - **ByteLevelBPE**: Optimized for character-level fallback and subword patterns
+   - **Unigram**: Better morphological analysis for Swahili's agglutinative structure
    - Head dimension: 64 (768/12)
    - Scaled dot-product attention
    - Rotary position embeddings
