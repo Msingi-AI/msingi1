@@ -48,7 +48,8 @@ class TrainingConfig:
         # Data settings
         train_file: str = "data/train.txt",
         valid_file: str = "data/valid.txt",
-        tokenizer_path: str = "tokenizer/swahili_bpe_32000/tokenizer.json",
+        tokenizer_type: str = "bpe",  # Options: 'bpe' or 'unigram'
+        tokenizer_path: str = None,  # If None, will be set based on tokenizer_type
         
         # Training settings
         num_epochs: int = 3,
