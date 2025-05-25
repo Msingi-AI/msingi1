@@ -64,22 +64,35 @@ The Unigram approach is particularly well-suited for Swahili because:
 4. It often produces more natural word segmentations for rare words
 5. It typically represents text with fewer tokens than BPE
 
-The tokenizer is available in both native format and Hugging Face Transformers format in the `tokenizer/` directory. It can be loaded and used as follows:
+Both tokenizers are available in both native format and Hugging Face Transformers format in the `tokenizer/` directory. They can be loaded and used as follows:
 
 ```python
 from transformers import PreTrainedTokenizerFast
 
-# Load the tokenizer
-tokenizer = PreTrainedTokenizerFast.from_pretrained("tokenizer/swahili_bpe_32000/transformers")
+# Load the ByteLevelBPE tokenizer
+bpe_tokenizer = PreTrainedTokenizerFast.from_pretrained("tokenizer/swahili_bpe_32000/transformers")
 
-# Example usage
+# Load the Unigram tokenizer
+unigram_tokenizer = PreTrainedTokenizerFast.from_pretrained("tokenizer/swahili_unigram_32000/transformers")
+
+# Example text
 text = "Ninapenda kusoma vitabu vya Kiswahili na kusikiliza muziki."
-encoded = tokenizer.encode(text)
-tokens = tokenizer.tokenize(text)
-decoded = tokenizer.decode(encoded)
 
-print(f"Tokens: {tokens}")
-print(f"Number of tokens: {len(tokens)}")
+# Compare tokenization approaches
+bpe_tokens = bpe_tokenizer.tokenize(text)
+unigram_tokens = unigram_tokenizer.tokenize(text)
+
+print(f"BPE tokens: {bpe_tokens}")
+print(f"BPE token count: {len(bpe_tokens)}")
+print(f"Unigram tokens: {unigram_tokens}")
+print(f"Unigram token count: {len(unigram_tokens)}")
+
+# Using the <eot> token for text separation
+texts = ["Habari ya leo.", "Habari nzuri sana."]
+combined_text = bpe_tokenizer.eos_token.join(texts)  # Joins with <eot>
+print(f"Combined with <eot>: {combined_text}")
+encoded = bpe_tokenizer.encode(combined_text)
+print(f"Decoded back: {bpe_tokenizer.decode(encoded)}")
 ```
 
 ## Dataset Characteristics
