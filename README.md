@@ -28,24 +28,41 @@ Throughout this research journey, we've experimented with different model archit
 ### Research Focus Areas
 - **Efficient Attention Mechanisms**: Exploring optimizations for limited GPU resources
 - **Gradient Checkpointing**: Testing memory-efficient training approaches
-- **Tokenization Strategies**: Implementing ByteLevelBPE tokenization with 32K vocabulary for Swahili
+- **Tokenization Strategies**: Implementing both ByteLevelBPE and Unigram tokenization with 32K vocabulary for Swahili
 - **Text Generation Techniques**: Experimenting with repetition penalties and n-gram blocking
 
 ## Tokenizer Implementation
 
-We've implemented a ByteLevelBPE tokenizer optimized for Swahili with the following specifications:
+We've implemented two types of tokenizers optimized for Swahili, each with their own strengths:
+
+### ByteLevelBPE Tokenizer
 
 - **Type**: ByteLevelBPE (Byte-Level Byte Pair Encoding)
 - **Vocabulary Size**: 32,000 tokens
-- **Special Tokens**: `<s>`, `</s>`, `<unk>`, `<pad>`, `<mask>`, `<sw>`
-- **Training Corpus**: 500,000 lines sampled from our 2.3M line training dataset
+- **Special Tokens**: `<s>`, `</s>`, `<unk>`, `<pad>`, `<mask>`, `<sw>`, `<eot>`
+- **Training Corpus**: Full training dataset (383 MB, ~41.8M words)
 - **Implementation**: Built using Hugging Face Tokenizers library
 
-The ByteLevelBPE approach was selected for Swahili because:
-1. It handles unknown words gracefully through character-level fallback
-2. It effectively captures morphological patterns in Swahili's agglutinative features
-3. It works well with subword regularities in Bantu languages
-4. It maintains compatibility with mainstream transformer architectures
+The ByteLevelBPE approach offers these advantages for Swahili:
+1. Handles unknown words gracefully through character-level fallback
+2. Captures frequent subword patterns efficiently
+3. Works well with subword regularities in Bantu languages
+4. Maintains compatibility with mainstream transformer architectures
+
+### Unigram Tokenizer
+
+- **Type**: Unigram (SentencePiece-style)
+- **Vocabulary Size**: 32,000 tokens
+- **Special Tokens**: `<s>`, `</s>`, `<unk>`, `<pad>`, `<mask>`, `<sw>`, `<eot>`
+- **Training Corpus**: Full training dataset (383 MB, ~41.8M words)
+- **Implementation**: Built using Hugging Face Tokenizers library
+
+The Unigram approach is particularly well-suited for Swahili because:
+1. It better handles morphological complexity through statistical optimization
+2. It creates more linguistically meaningful subword units
+3. It's especially effective for agglutinative languages like Swahili
+4. It often produces more natural word segmentations for rare words
+5. It typically represents text with fewer tokens than BPE
 
 The tokenizer is available in both native format and Hugging Face Transformers format in the `tokenizer/` directory. It can be loaded and used as follows:
 
