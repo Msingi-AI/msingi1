@@ -317,8 +317,17 @@ def train(model_config, training_config):
         model.gradient_checkpointing_enable()
         print("Gradient checkpointing enabled")
     
+    # Determine tokenizer path based on type if not explicitly provided
+    if training_config.tokenizer_path is None:
+        if training_config.tokenizer_type.lower() == 'bpe':
+            training_config.tokenizer_path = "tokenizer/swahili_bpe_32000/tokenizer.json"
+        elif training_config.tokenizer_type.lower() == 'unigram':
+            training_config.tokenizer_path = "tokenizer/swahili_unigram_32000/tokenizer.json"
+        else:
+            raise ValueError(f"Unknown tokenizer type: {training_config.tokenizer_type}. Use 'bpe' or 'unigram'.")
+    
     # Load tokenizer
-    print(f"Loading tokenizer from {training_config.tokenizer_path}")
+    print(f"Loading {training_config.tokenizer_type} tokenizer from {training_config.tokenizer_path}")
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=training_config.tokenizer_path)
     
     # Update model config with tokenizer vocab size
@@ -618,7 +627,10 @@ def main():
     # Data arguments
     parser.add_argument("--train-file", type=str, default="data/train.txt", help="Path to training file")
     parser.add_argument("--valid-file", type=str, default="data/valid.txt", help="Path to validation file")
-    parser.add_argument("--tokenizer-path", type=str, default="tokenizer/swahili_bpe_32000/tokenizer.json", help="Path to tokenizer")
+    parser.add_argument("--tokenizer-type", type=str, default="bpe", choices=["bpe", "unigram"], 
+                        help="Type of tokenizer to use (bpe or unigram)")
+    parser.add_argument("--tokenizer-path", type=str, default=None, 
+                        help="Path to tokenizer (if not specified, will use the default path based on tokenizer-type)")
     
     # Training arguments
     parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
