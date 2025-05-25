@@ -330,13 +330,13 @@ def train(model_config, training_config):
     print("Preparing datasets...")
     train_dataset = SwahiliDataset(
         training_config.train_file,
-        tokenizer_path,  # Use the Unigram tokenizer path
+        tokenizer_path,
         training_config.sequence_length
     )
     
     valid_dataset = SwahiliDataset(
         training_config.valid_file,
-        tokenizer_path,  # Use the Unigram tokenizer path
+        tokenizer_path,
         training_config.sequence_length
     )
     
