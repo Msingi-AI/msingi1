@@ -41,9 +41,20 @@ def create_token_shards(
     print(f"Loading tokenizer from {tokenizer_path}")
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
     
-    # Get EOT token ID
+    # Get or add EOT token ID
+    if tokenizer.eos_token_id is None:
+        print("EOT token not found in tokenizer. Adding <eot> token...")
+        # Add <eot> token to the tokenizer
+        tokenizer.add_special_tokens({'eos_token': '<eot>'})
+        # Save the updated tokenizer
+        tokenizer.save_pretrained(os.path.join(os.path.dirname(tokenizer_path), "updated"))
+        print(f"Updated tokenizer saved with <eot> token")
+    
     eot_id = tokenizer.eos_token_id
     print(f"EOT token ID: {eot_id}")
+    
+    if eot_id is None:
+        raise ValueError("Failed to add EOT token to tokenizer")
     
     # Process validation set
     print(f"\nProcessing validation set: {valid_file}")
