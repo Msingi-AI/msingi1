@@ -50,7 +50,7 @@ class TrainingConfig:
         tokenizer_path: str = "tokenizer/swahili_unigram_32000/tokenizer.json",
         
         # Training settings
-        num_epochs: int = 3,
+        num_epochs: int = 1,
         batch_size: int = 16,
         grad_accum_steps: int = 4,  # Effective batch size = 64
         sequence_length: int = 1024,
