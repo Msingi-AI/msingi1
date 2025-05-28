@@ -10,8 +10,9 @@ import random
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union, Tuple
-import wandb
-from model import MsingiConfig, Msingi1
+import inspect
+
+from model_v2 import Msingi2, Msingi2Config
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
 from torch.cuda.amp import GradScaler, autocast
@@ -42,7 +43,7 @@ torch.backends.cuda.matmul.allow_tf32 = True  # Allow TF32 on Ampere+ GPUs
 torch.backends.cudnn.allow_tf32 = True  # Allow TF32 for cuDNN
 
 class TrainingConfig:
-    """Configuration for Msingi1 training"""
+    """Configuration for Msingi2 training"""
     def __init__(
         self,
         # Data settings
@@ -50,16 +51,16 @@ class TrainingConfig:
         tokenizer_path: str = "tokenizer/swahili_unigram_32000/tokenizer.json",
         
         # Training settings
-        num_epochs: int = 1,
-        batch_size: int = 16,
-        grad_accum_steps: int = 4,  # Effective batch size = 64
+        num_epochs: int = 3,
+        batch_size: int = 8,  # Reduced from 16 for larger model
+        grad_accum_steps: int = 8,  # Increased from 4 for larger model
         sequence_length: int = 1024,
         
         # Optimization settings
-        learning_rate: float = 3e-4,
+        learning_rate: float = 1e-4,  # Reduced from 3e-4 for larger model
         weight_decay: float = 0.1,
         max_grad_norm: float = 1.0,
-        warmup_ratio: float = 0.03,
+        warmup_ratio: float = 0.05,  # Increased from 0.03 for larger model
         min_lr_ratio: float = 0.1,  # min_lr = learning_rate * min_lr_ratio
         
         # Evaluation and saving
@@ -69,13 +70,13 @@ class TrainingConfig:
         
         # Technical settings
         fp16: bool = True,
-        checkpoint_dir: str = "checkpoints",
+        checkpoint_dir: str = "checkpoints_msingi2",
         log_interval: int = 10,
         seed: int = 42,
         
         # Wandb settings
         use_wandb: bool = True,
-        wandb_project: str = "msingi1",
+        wandb_project: str = "msingi2",
         wandb_entity: Optional[str] = None,
         wandb_run_name: Optional[str] = None,
         
@@ -108,7 +109,7 @@ class TrainingConfig:
         self.use_wandb = use_wandb and WANDB_AVAILABLE
         self.wandb_project = wandb_project
         self.wandb_entity = wandb_entity
-        self.wandb_run_name = wandb_run_name or f"msingi1-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self.wandb_run_name = wandb_run_name or f"msingi2-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         
         self.rep_penalty_alpha = rep_penalty_alpha
         
@@ -119,62 +120,71 @@ class TrainingConfig:
         """Save config to JSON file"""
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.__dict__, f, indent=2)
-    
-    @classmethod
-    def load(cls, path: str) -> 'TrainingConfig':
-        """Load config from JSON file"""
-        with open(path, 'r', encoding='utf-8') as f:
-            config_dict = json.load(f)
-        return cls(**config_dict)
 
 class ShardedTokenDataset(Dataset):
-    """Dataset for training with sharded token files"""
-    def __init__(self, tokens_dir: str, split: str, seq_length: int):
+    """Dataset that loads tokens from sharded numpy files"""
+    
+    def __init__(self, tokens_dir, split, seq_length):
+        """
+        Initialize the dataset.
+        
+        Args:
+            tokens_dir: Directory containing token shards
+            split: 'train' or 'val'
+            seq_length: Sequence length for training
+        """
         self.tokens_dir = tokens_dir
         self.split = split
         self.seq_length = seq_length
         
-        # Load metadata
-        metadata_path = os.path.join(tokens_dir, "metadata.json")
-        with open(metadata_path, 'r', encoding='utf-8') as f:
-            self.metadata = json.load(f)
-        
         # Find all shards for this split
         self.shard_paths = []
-        for file in os.listdir(tokens_dir):
-            if file.startswith(f"msingi_{split}_") and file.endswith(".npy"):
-                self.shard_paths.append(os.path.join(tokens_dir, file))
+        for filename in os.listdir(tokens_dir):
+            if filename.startswith(f"msingi_{split}_") and filename.endswith(".npy"):
+                self.shard_paths.append(os.path.join(tokens_dir, filename))
         
-        self.shard_paths.sort()  # Ensure deterministic order
-        print(f"Found {len(self.shard_paths)} shards for {split} split")
+        self.shard_paths = sorted(self.shard_paths)
         
-        # Calculate total number of sequences
+        if len(self.shard_paths) == 0:
+            raise ValueError(f"No {split} shards found in {tokens_dir}")
+        
+        # Load metadata
+        metadata_path = os.path.join(tokens_dir, "metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                self.metadata = json.load(f)
+        else:
+            print(f"Warning: No metadata.json found in {tokens_dir}")
+            self.metadata = {}
+        
+        # Calculate total tokens
         self.total_tokens = 0
-        for shard_path in self.shard_paths:
-            # Just get the shape without loading the full array
-            shard_size = np.load(shard_path, mmap_mode='r').shape[0]
+        for path in self.shard_paths:
+            shard_size = os.path.getsize(path) // 2  # uint16 = 2 bytes
             self.total_tokens += shard_size
         
-        self.num_sequences = (self.total_tokens - 1) // seq_length
-        print(f"Total tokens: {self.total_tokens:,}")
-        print(f"Sequence length: {seq_length}")
-        print(f"Total sequences: {self.num_sequences:,}")
-        
-        # Current shard data
+        # Initialize state
         self.current_shard_idx = -1
         self.current_shard_data = None
+        
+        print(f"Loaded {split} dataset with {len(self.shard_paths)} shards, {self.total_tokens:,} tokens")
     
     def __len__(self):
-        return self.num_sequences
+        """Return an approximate length of the dataset"""
+        # This is approximate and used for progress bars
+        return self.total_tokens // self.seq_length
     
     def __getitem__(self, idx):
-        # Calculate which shard and position within shard
-        seq_start = idx * self.seq_length
+        """Get a sequence of tokens starting at a random position"""
+        # Generate a random position within the dataset
+        seq_start = random.randint(0, self.total_tokens - self.seq_length - 1)
+        
+        # Find which shard contains this position
         tokens_seen = 0
         target_shard_idx = 0
         
-        for i, shard_path in enumerate(self.shard_paths):
-            shard_size = np.load(shard_path, mmap_mode='r').shape[0]
+        for i, path in enumerate(self.shard_paths):
+            shard_size = os.path.getsize(path) // 2  # uint16 = 2 bytes
             if tokens_seen + shard_size > seq_start:
                 target_shard_idx = i
                 break
@@ -193,7 +203,7 @@ class ShardedTokenDataset(Dataset):
             # Sequence fits in current shard
             tokens = self.current_shard_data[pos_in_shard:pos_in_shard + self.seq_length + 1]
         else:
-            # Sequence spans multiple shards
+            # Sequence spans two shards
             tokens = self.current_shard_data[pos_in_shard:]
             remaining = self.seq_length + 1 - len(tokens)
             
@@ -283,19 +293,17 @@ def evaluate(model, dataloader, config, device, fp16=False):
             
             if fp16:
                 with autocast():
-                    logits = model(input_ids)
-                    loss = compute_loss(logits, labels, config.rep_penalty_alpha)
+                    logits, loss = model(input_ids, labels)
             else:
-                logits = model(input_ids)
-                loss = compute_loss(logits, labels, config.rep_penalty_alpha)
+                logits, loss = model(input_ids, labels)
             
             total_loss += loss.item() * input_ids.size(0)
             total_tokens += input_ids.size(0) * input_ids.size(1)
     
     return total_loss / total_tokens
 
-def train(model_config: MsingiConfig, training_config: TrainingConfig):
-    """Train the Msingi1 model using sharded token datasets"""
+def train(model_config: Msingi2Config, training_config: TrainingConfig):
+    """Train the Msingi2 model using sharded token datasets"""
     # Set random seeds for reproducibility
     torch.manual_seed(training_config.seed)
     np.random.seed(training_config.seed)
@@ -307,13 +315,8 @@ def train(model_config: MsingiConfig, training_config: TrainingConfig):
     
     # Initialize model
     print("Initializing model...")
-    model = Msingi1(model_config)
+    model = Msingi2(model_config)
     model.to(device)
-    
-    # Enable gradient checkpointing if available
-    if hasattr(model, 'gradient_checkpointing_enable'):
-        model.gradient_checkpointing_enable()
-        print("Gradient checkpointing enabled")
     
     # Load tokenizer
     tokenizer_path = training_config.tokenizer_path
@@ -358,10 +361,11 @@ def train(model_config: MsingiConfig, training_config: TrainingConfig):
     )
     
     # Set up optimizer
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=training_config.learning_rate,
-        weight_decay=training_config.weight_decay
+    optimizer = model.configure_optimizers(
+        weight_decay=training_config.weight_decay,
+        learning_rate=training_config.learning_rate,
+        betas=(0.9, 0.95),
+        device_type='cuda' if device.type == 'cuda' else 'cpu'
     )
     
     # Set up learning rate scheduler
@@ -421,8 +425,7 @@ def train(model_config: MsingiConfig, training_config: TrainingConfig):
             # Forward pass with mixed precision if enabled
             if training_config.fp16:
                 with autocast():
-                    logits = model(input_ids)
-                    loss = compute_loss(logits, labels, training_config.rep_penalty_alpha)
+                    logits, loss = model(input_ids, labels)
                     loss = loss / training_config.grad_accum_steps
                 
                 # Backward pass with gradient scaling
@@ -443,8 +446,7 @@ def train(model_config: MsingiConfig, training_config: TrainingConfig):
                     global_step += 1
             else:
                 # Standard forward and backward pass
-                logits = model(input_ids)
-                loss = compute_loss(logits, labels, training_config.rep_penalty_alpha)
+                logits, loss = model(input_ids, labels)
                 loss = loss / training_config.grad_accum_steps
                 
                 loss.backward()
@@ -529,95 +531,81 @@ def train(model_config: MsingiConfig, training_config: TrainingConfig):
         
         # End of epoch
         epoch_loss = epoch_loss / epoch_tokens
-        print(f"Epoch {epoch+1}/{training_config.num_epochs} | Loss: {epoch_loss:.4f}")
+        print(f"Epoch {epoch+1}/{training_config.num_epochs} complete | Loss: {epoch_loss:.4f}")
+        
+        # Evaluate at the end of each epoch
+        val_loss = evaluate(model, valid_loader, training_config, device, training_config.fp16)
+        print(f"Epoch {epoch+1}/{training_config.num_epochs} | Validation loss: {val_loss:.4f}")
         
         if training_config.use_wandb:
             wandb.log({
                 "train/epoch_loss": epoch_loss,
-                "train/epoch_perplexity": math.exp(epoch_loss),
+                "eval/epoch_loss": val_loss,
+                "eval/epoch_perplexity": math.exp(val_loss),
                 "train/epoch": epoch + 1
             })
+        
+        # Save epoch checkpoint
+        epoch_path = os.path.join(training_config.checkpoint_dir, f"epoch-{epoch+1}")
+        os.makedirs(epoch_path, exist_ok=True)
+        
+        # Save model
+        torch.save(model.state_dict(), os.path.join(epoch_path, "pytorch_model.bin"))
+        
+        # Save configs
+        with open(os.path.join(epoch_path, "model_config.json"), 'w') as f:
+            json.dump(model_config.__dict__, f, indent=2)
+        
+        training_config.save(os.path.join(epoch_path, "training_config.json"))
+        
+        print(f"Saved checkpoint for epoch {epoch+1}")
     
-    # Save final model
-    final_model_path = os.path.join(training_config.checkpoint_dir, "final_model")
-    os.makedirs(final_model_path, exist_ok=True)
-    
-    # Save model
-    torch.save(model.state_dict(), os.path.join(final_model_path, "pytorch_model.bin"))
-    
-    # Save configs
-    with open(os.path.join(final_model_path, "model_config.json"), 'w') as f:
-        json.dump(model_config.__dict__, f, indent=2)
-    
-    training_config.save(os.path.join(final_model_path, "training_config.json"))
-    
-    print(f"Training complete! Final model saved to {final_model_path}")
-    print(f"Best validation loss: {best_val_loss:.4f}")
-    
-    return model
-
-def generate_sample_text(model, tokenizer, prompt, max_length=100, temperature=0.8, top_k=40, top_p=0.9):
-    """Generate sample text from the model"""
-    model.eval()
-    
-    # Encode prompt
-    input_ids = tokenizer.encode(prompt, return_tensors="pt").to(model.device)
-    
-    # Generate text
-    with torch.no_grad():
-        output = model.generate(
-            input_ids,
-            max_length=max_length,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            do_sample=True
-        )
-    
-    # Decode output
-    generated_text = tokenizer.decode(output[0], skip_special_tokens=True)
-    return generated_text
+    print("Training complete!")
+    return model, best_val_loss
 
 def main():
-    parser = argparse.ArgumentParser(description="Train Msingi1 Swahili language model with sharded tokens")
+    parser = argparse.ArgumentParser(description="Train Msingi2 Swahili language model with sharded tokens")
     
     # Data arguments
     parser.add_argument("--tokens-dir", type=str, default="msingi_tokens", help="Directory containing token shards")
     
     # Training arguments
     parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
-    parser.add_argument("--grad-accum-steps", type=int, default=4, help="Gradient accumulation steps")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
+    parser.add_argument("--grad-accum-steps", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--seq-length", type=int, default=1024, help="Sequence length")
     
     # Optimization arguments
-    parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--weight-decay", type=float, default=0.1, help="Weight decay")
-    parser.add_argument("--warmup-ratio", type=float, default=0.03, help="Warmup ratio")
+    parser.add_argument("--warmup-ratio", type=float, default=0.05, help="Warmup ratio")
     
     # Technical arguments
     parser.add_argument("--no-fp16", action="store_true", help="Disable mixed precision training")
-    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints", help="Checkpoint directory")
+    parser.add_argument("--checkpoint-dir", type=str, default="checkpoints_msingi2", help="Checkpoint directory")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     
     # WandB arguments
     parser.add_argument("--wandb", action="store_true", help="Enable WandB logging")
-    parser.add_argument("--wandb-project", type=str, default="msingi1", help="WandB project name")
+    parser.add_argument("--wandb-project", type=str, default="msingi2", help="WandB project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="WandB entity name")
     parser.add_argument("--wandb-run-name", type=str, default=None, help="WandB run name")
+    
+    # Model arguments
+    parser.add_argument("--n-layer", type=int, default=24, help="Number of layers")
+    parser.add_argument("--n-head", type=int, default=24, help="Number of attention heads")
+    parser.add_argument("--n-embd", type=int, default=1024, help="Embedding dimension")
     
     args = parser.parse_args()
     
     # Create model config
-    model_config = MsingiConfig(
+    model_config = Msingi2Config(
         vocab_size=32000,  # Will be updated based on tokenizer
-        max_position_embeddings=args.seq_length,
-        n_layer=12,
-        n_head=12,
-        n_embd=768,
-        intermediate_size=3072,
+        block_size=args.seq_length,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        n_embd=args.n_embd,
         dropout=0.1,
-        rotary_emb=True,
         gradient_checkpointing=True
     )
     
@@ -644,23 +632,10 @@ def main():
         wandb_run_name=args.wandb_run_name
     )
     
-    # Train model
-    model = train(model_config, training_config)
+    # Train the model
+    model, best_val_loss = train(model_config, training_config)
     
-    # Save final model and config
-    model_dir = os.path.join(args.checkpoint_dir, "final_model")
-    os.makedirs(model_dir, exist_ok=True)
-    
-    # Save model
-    torch.save(model.state_dict(), os.path.join(model_dir, "pytorch_model.bin"))
-    
-    # Save configs
-    with open(os.path.join(model_dir, "model_config.json"), 'w') as f:
-        json.dump(model_config.__dict__, f, indent=2)
-    
-    training_config.save(os.path.join(model_dir, "training_config.json"))
-    
-    print(f"Training complete! Final model saved to {model_dir}")
+    print(f"Training complete! Best validation loss: {best_val_loss:.4f}")
 
 if __name__ == "__main__":
     main()

@@ -200,3 +200,4 @@ checkpoints/best.pt
 *.txt
 datasets/
 msingi_tokens/
+msingi1_best_model/
