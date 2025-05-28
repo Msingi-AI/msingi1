@@ -149,6 +149,50 @@ Our current training methodology includes:
 - **Training Duration**: Experimenting with 10-15 epochs with early stopping
 - **Mixed Precision**: FP16 training for speed and memory efficiency
 - **Sliding Window Processing**: 50% overlap for better context learning
+- **Gradient Checkpointing**: Memory-efficient backpropagation
+- **Sharded Dataset**: Memory-mapped token shards for efficient loading
+
+## Dataset Sharding
+
+To efficiently train on our large Swahili corpus while minimizing memory usage, we've implemented a sharded token dataset approach:
+
+1. **Tokenization Process**:
+   - The raw text corpus is tokenized using our Unigram tokenizer
+   - Each document is separated with an `<eot>` token
+   - Tokens are stored as memory-mapped NumPy arrays for efficient access
+
+2. **Sharding Strategy**:
+   - Training data is split into ~10M token shards
+   - Validation data is kept in a single shard
+   - Each shard is stored as a separate `.npy` file
+   - Memory mapping enables loading only the required portions during training
+
+3. **Shard Distribution**:
+
+| Shard File | Type | Size (MB) | Tokens | Description |
+|------------|------|-----------|--------|-------------|
+| msingi_train_000000.npy | Training | 19.1 | 10,000,000 | Training shard 1 |
+| msingi_train_000001.npy | Training | 19.1 | 10,000,000 | Training shard 2 |
+| msingi_train_000002.npy | Training | 19.1 | 10,000,000 | Training shard 3 |
+| msingi_train_000003.npy | Training | 19.1 | 10,000,000 | Training shard 4 |
+| msingi_train_000004.npy | Training | 19.1 | 10,000,000 | Training shard 5 |
+| msingi_train_000005.npy | Training | 19.1 | 10,000,000 | Training shard 6 |
+| msingi_train_000006.npy | Training | 19.1 | 10,000,000 | Training shard 7 |
+| msingi_train_000007.npy | Training | 19.1 | 10,000,000 | Training shard 8 |
+| msingi_train_000008.npy | Training | 3.0 | 1,551,598 | Training shard 9 (partial) |
+| msingi_val_000000.npy | Validation | 17.0 | 8,904,050 | Validation shard |
+| **Total** | | **173.8** | **91,551,598** | **Full dataset** |
+
+4. **Benefits of Sharding**:
+   - **Memory Efficiency**: Only loads necessary tokens into memory
+   - **Training Speed**: Reduces I/O bottlenecks through memory mapping
+   - **Scalability**: Enables training on larger datasets than would fit in RAM
+   - **Flexibility**: Allows for dynamic shard loading and epoch definitions
+
+5. **Implementation**:
+   - `create_token_shards.py`: Tokenizes and creates the sharded dataset
+   - `train_with_shards.py`: Implements efficient training with the sharded approach
+   - `ShardedTokenDataset` class: Handles dynamic loading of token shards
 
 ## Preliminary Text Generation Observations
 
