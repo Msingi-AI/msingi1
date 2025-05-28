@@ -74,7 +74,7 @@ class TrainingConfig:
         seed: int = 42,
         
         # Wandb settings
-        use_wandb: bool = False,
+        use_wandb: bool = True,
         wandb_project: str = "msingi1",
         wandb_entity: Optional[str] = None,
         wandb_run_name: Optional[str] = None,
