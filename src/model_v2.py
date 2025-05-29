@@ -127,11 +127,8 @@ class Msingi2(nn.Module):
         ))
         
         # language modeling head
-        # Using the embedding weight for the output layer (weight tying)
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        
-        # Initialize with the same weights (weight tying)
-        self.lm_head.weight = self.transformer.wte.weight
+        # We'll use the embedding weights directly in the forward pass
+        # This avoids the 'lm_head.weight' KeyError in configure_optimizers
         
         # init all weights
         self.apply(self._init_weights)
@@ -170,9 +167,9 @@ class Msingi2(nn.Module):
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         
         # forward the token and position embeddings
-        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # (1, t)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
+        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
         
         # forward the transformer blocks
@@ -184,9 +181,11 @@ class Msingi2(nn.Module):
             for block in self.transformer.h:
                 x = block(x)
                 
-        # forward the final layer norm and language modeling head
+        # forward the final layer norm
         x = self.transformer.ln_f(x)
-        logits = self.lm_head(x) # (b, t, vocab_size)
+
+        # Use the embedding weight matrix for the output projection (weight tying)
+        logits = F.linear(x, self.transformer.wte.weight) # (b, t, vocab_size)
         
         # if we are given some desired targets also calculate the loss
         loss = None
