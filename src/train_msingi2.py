@@ -335,11 +335,6 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_f
         else:
             raise ValueError(f"Model weights not found at {model_path}")
         
-        # Load optimizer state if available
-        optimizer_path = checkpoint_path / "optimizer.pt"
-        if optimizer_path.exists():
-            print(f"Found optimizer state at {optimizer_path}")
-        
         # Determine starting epoch from checkpoint name
         if "epoch-" in checkpoint_path.name:
             try:
@@ -356,6 +351,12 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_f
                 global_step = training_state.get("global_step", 0)
                 best_val_loss = training_state.get("best_val_loss", float('inf'))
                 print(f"Resuming from global step {global_step} with best validation loss {best_val_loss:.4f}")
+        else:
+            # If no training state file exists, create one based on the epoch number
+            print(f"No training state found, creating one based on epoch {start_epoch}")
+            # Estimate global step based on epoch
+            # Assuming ~10000 steps per epoch based on your dataset size
+            global_step = start_epoch * 10000
     
     model.to(device)
     
@@ -450,7 +451,7 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_f
     # Training loop
     print("Starting training...")
     
-    for epoch in range(training_config.num_epochs):
+    for epoch in range(start_epoch, training_config.num_epochs):
         model.train()
         epoch_loss = 0.0
         epoch_tokens = 0
