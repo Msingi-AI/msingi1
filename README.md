@@ -2,34 +2,66 @@
  
 ## Research Overview
 
-Msingi1 ("Foundation" in Swahili) documents our ongoing research journey in developing decoder-only transformer language models for Swahili. This project is an experimental exploration of foundation models for low-resource African languages, with a focus on understanding the trade-offs between model size, training efficiency, and text generation quality.
+Msingi1 ("Foundation" in Swahili) documents our ongoing research journey in developing decoder-only transformer language models for Swahili. This project explores foundation models for low-resource African languages, with a focus on understanding the trade-offs between model size, training efficiency, and text generation quality.
 
-> **Note**: This project is a work-in-progress research effort and not yet ready for production use. We're sharing our journey to contribute to the growing body of knowledge on African language NLP.
+> **Note**: This project is a work-in-progress research effort with active development. The model is currently undergoing extended training to improve coherence and generation capabilities. We're sharing our journey to contribute to the growing body of knowledge on African language NLP.
 
 ## Architectural Exploration
 
-Throughout this research journey, we've experimented with different model architectures:
+Throughout this research journey, we've experimented with different model architectures, culminating in our current 336M parameter model:
 
-### Current Architecture
-- 12 layers, 768 hidden size, 12 attention heads
-- Approximately 110M parameters (with 32K vocabulary)
-- 2048 token context length
-- Rotary Position Embeddings (RoPE)
+### Current Architecture (Msingi1 336M)
+- 24 layers, 1024 hidden size, 16 attention heads
+- Approximately 336M parameters (with 32K vocabulary)
+- 1024 token context length
+- Traditional learned position embeddings (similar to GPT-2/GPT-3)
 - Pre-norm transformer architecture with GELU activation
 - Flash Attention optimization for efficient training
 - Gradient checkpointing for memory efficiency
 
-### Previous Experiments
+### Previous Iterations
+- 12 layers, 768 hidden size, 12 attention heads (~110M parameters)
 - 8 layers, 512 hidden size, 8 attention heads (~28M parameters)
+- Rotary Position Embeddings (RoPE) in earlier versions
 - Various context length configurations (1024-2048 tokens)
-- Different initialization strategies and training dynamics
-- Exploration of EOS token handling for better text completion
 
 ### Research Focus Areas
-- **Efficient Attention Mechanisms**: Exploring optimizations for limited GPU resources
-- **Gradient Checkpointing**: Testing memory-efficient training approaches
-- **Tokenization Strategies**: Implementing both ByteLevelBPE and Unigram tokenization with 32K vocabulary for Swahili
-- **Text Generation Techniques**: Experimenting with repetition penalties and n-gram blocking
+- **Scaling Laws for Swahili**: Understanding how model size affects performance for morphologically rich languages
+- **Traditional vs. Rotary Embeddings**: Comparing position embedding approaches for Swahili text generation
+- **Efficient Training Techniques**: Implementing sharded datasets, gradient accumulation, and mixed precision training
+- **Tokenization Strategies**: Optimizing Unigram tokenization (32K vocabulary) for Swahili's agglutinative structure
+- **Text Generation Coherence**: Addressing context maintenance and topic drift in longer generations
+
+## Current Progress and Limitations
+
+### Training Progress
+The Msingi1 336M model has completed initial training for 3 epochs on our 88.6M token Swahili corpus. Key observations:
+
+- **Training Efficiency**: Each epoch (9,955 steps) completes in approximately 30 minutes on modern GPU hardware
+- **Convergence**: Validation loss shows steady improvement across epochs
+- **Text Generation**: The model produces grammatically correct Swahili with proper morphology
+- **Current Limitations**: Text generations show topic drift and context maintenance issues
+
+### Sample Generations
+
+```
+Prompt: "Habari ya leo, jina langu ni"
+Output: "habari ya leo, jina langu ni je, wewe kama umeoa?pia ni vyema sasa viongozi wa serikali ambao wanaongozwa na sheria hii ya kuzuia rushwa nchini.kwa sababu kwa hali ilivyo, nasikitika kwamba suala la akinamama kutumia jembe la mkono limekuwa sugu kwa sababu hata mtoto akipanda chini anakomaa kidogo."
+```
+
+### Ongoing Work
+
+- **Extended Training**: Currently training for 2 additional epochs (epochs 4-5) to improve coherence
+- **Parameter Tuning**: Exploring optimal generation parameters for better text quality
+- **Evaluation Framework**: Developing Swahili-specific benchmarks for model assessment
+- **Fine-tuning Exploration**: Planning targeted fine-tuning on conversational data
+
+### Future Roadmap
+
+- **Instruction Tuning**: Adapt the model for instruction following capabilities
+- **Evaluation Suite**: Develop comprehensive evaluation metrics for Swahili NLP
+- **Multilingual Expansion**: Explore expansion to other East African languages
+- **Deployment Optimizations**: Quantization and serving optimizations for practical applications
 
 ## Tokenizer Implementation
 
