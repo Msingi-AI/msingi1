@@ -593,7 +593,7 @@ def main():
     
     # Model arguments
     parser.add_argument("--n-layer", type=int, default=24, help="Number of layers")
-    parser.add_argument("--n-head", type=int, default=24, help="Number of attention heads")
+    parser.add_argument("--n-head", type=int, default=16, help="Number of attention heads")
     parser.add_argument("--n-embd", type=int, default=1024, help="Embedding dimension")
     
     args = parser.parse_args()
@@ -608,6 +608,12 @@ def main():
         dropout=0.1,
         gradient_checkpointing=True
     )
+    
+    # Ensure embedding dimension is divisible by number of heads
+    if model_config.n_embd % model_config.n_head != 0:
+        # Adjust n_embd to be divisible by n_head
+        model_config.n_embd = model_config.n_head * (model_config.n_embd // model_config.n_head)
+        print(f"Adjusted embedding dimension to {model_config.n_embd} to be divisible by {model_config.n_head} heads")
     
     # Create training config
     training_config = TrainingConfig(
