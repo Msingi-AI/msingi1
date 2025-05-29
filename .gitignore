@@ -193,6 +193,7 @@ swa_wikipedia_2021_30K
 swa_community_2023
 # Model checkpoints
 checkpoints/*.pt
+checkpoints/initial/
 checkpoints/"best .pt"
 checkpoints/latest.pt
 checkpoints/best.pt
