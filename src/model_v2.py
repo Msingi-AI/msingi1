@@ -127,10 +127,11 @@ class Msingi2(nn.Module):
         ))
         
         # language modeling head
+        # Using the embedding weight for the output layer (weight tying)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         
-        # weight tying
-        self.transformer.wte.weight = self.lm_head.weight
+        # Initialize with the same weights (weight tying)
+        self.lm_head.weight = self.transformer.wte.weight
         
         # init all weights
         self.apply(self._init_weights)
@@ -270,8 +271,16 @@ class Msingi2(nn.Module):
         inter_params = decay & no_decay
         union_params = decay | no_decay
         assert len(inter_params) == 0, "parameters %s made it into both decay/no_decay sets!" % (str(inter_params), )
-        assert len(param_dict.keys() - union_params) == 0, "parameters %s were not separated into either decay/no_decay set!" \
-                                                    % (str(param_dict.keys() - union_params), )
+        
+        # Check for missing parameters and add them to appropriate sets
+        missing_params = param_dict.keys() - union_params
+        if len(missing_params) > 0:
+            print(f"Warning: Parameters {missing_params} were not assigned to decay/no_decay sets")
+            for pn in missing_params:
+                if pn.endswith('bias'):
+                    no_decay.add(pn)
+                else:
+                    decay.add(pn)
         
         # create the pytorch optimizer object
         optim_groups = [
