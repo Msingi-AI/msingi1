@@ -302,7 +302,7 @@ def evaluate(model, dataloader, config, device, fp16=False):
     
     return total_loss / total_tokens
 
-def train(model_config: Msingi2Config, training_config: TrainingConfig):
+def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_from=None):
     """Train the Msingi2 model using sharded token datasets"""
     # Set random seeds for reproducibility
     torch.manual_seed(training_config.seed)
@@ -316,6 +316,47 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig):
     # Initialize model
     print("Initializing model...")
     model = Msingi2(model_config)
+    
+    # Track starting epoch and global step for resumption
+    start_epoch = 0
+    global_step = 0
+    best_val_loss = float('inf')
+    
+    # Resume from checkpoint if specified
+    if resume_from is not None:
+        print(f"Resuming from checkpoint: {resume_from}")
+        checkpoint_path = Path(resume_from)
+        
+        # Load model weights
+        model_path = checkpoint_path / "pytorch_model.bin"
+        if model_path.exists():
+            print(f"Loading model weights from {model_path}")
+            model.load_state_dict(torch.load(str(model_path), map_location=device))
+        else:
+            raise ValueError(f"Model weights not found at {model_path}")
+        
+        # Load optimizer state if available
+        optimizer_path = checkpoint_path / "optimizer.pt"
+        if optimizer_path.exists():
+            print(f"Found optimizer state at {optimizer_path}")
+        
+        # Determine starting epoch from checkpoint name
+        if "epoch-" in checkpoint_path.name:
+            try:
+                start_epoch = int(checkpoint_path.name.split("-")[1])
+                print(f"Resuming from epoch {start_epoch}")
+            except (ValueError, IndexError):
+                print("Could not determine epoch from checkpoint name, starting from epoch 0")
+        
+        # Load training state if available
+        training_state_path = checkpoint_path / "training_state.json"
+        if training_state_path.exists():
+            with open(training_state_path, 'r') as f:
+                training_state = json.load(f)
+                global_step = training_state.get("global_step", 0)
+                best_val_loss = training_state.get("best_val_loss", float('inf'))
+                print(f"Resuming from global step {global_step} with best validation loss {best_val_loss:.4f}")
+    
     model.to(device)
     
     # Load tokenizer
@@ -408,8 +449,6 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig):
     
     # Training loop
     print("Starting training...")
-    global_step = 0
-    best_val_loss = float('inf')
     
     for epoch in range(training_config.num_epochs):
         model.train()
@@ -552,6 +591,18 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig):
         # Save model
         torch.save(model.state_dict(), os.path.join(epoch_path, "pytorch_model.bin"))
         
+        # Save optimizer state
+        torch.save(optimizer.state_dict(), os.path.join(epoch_path, "optimizer.pt"))
+        
+        # Save training state
+        training_state = {
+            "epoch": epoch + 1,
+            "global_step": global_step,
+            "best_val_loss": best_val_loss
+        }
+        with open(os.path.join(epoch_path, "training_state.json"), 'w') as f:
+            json.dump(training_state, f, indent=2)
+        
         # Save configs
         with open(os.path.join(epoch_path, "model_config.json"), 'w') as f:
             json.dump(model_config.__dict__, f, indent=2)
@@ -570,10 +621,11 @@ def main():
     parser.add_argument("--tokens-dir", type=str, default="msingi_tokens", help="Directory containing token shards")
     
     # Training arguments
-    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
     parser.add_argument("--grad-accum-steps", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--seq-length", type=int, default=1024, help="Sequence length")
+    parser.add_argument("--resume-from", type=str, default=None, help="Resume training from a checkpoint directory")
     
     # Optimization arguments
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
@@ -639,7 +691,7 @@ def main():
     )
     
     # Train the model
-    model, best_val_loss = train(model_config, training_config)
+    model, best_val_loss = train(model_config, training_config, args.resume_from)
     
     print(f"Training complete! Best validation loss: {best_val_loss:.4f}")
 
