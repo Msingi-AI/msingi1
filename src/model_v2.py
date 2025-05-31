@@ -104,9 +104,9 @@ class Msingi2Config:
     """
     vocab_size: int = 32000
     block_size: int = 1024  # max sequence length
-    n_layer: int = 24
-    n_head: int = 24
-    n_embd: int = 1024
+    n_layer: int = 18
+    n_head: int = 16
+    n_embd: int = 768
     dropout: float = 0.1
     bias: bool = True  # True: bias in Linear layers and LayerNorm, False: no bias
     gradient_checkpointing: bool = True
