@@ -277,11 +277,16 @@ def get_cosine_schedule_with_warmup(
     
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
 
-def evaluate(model, dataloader, config, device, fp16=False):
+def evaluate(model, dataloader, config, device, fp16=False, return_metrics=False):
     """Evaluate model on validation data"""
     model.eval()
     total_loss = 0.0
     total_tokens = 0
+    total_correct = 0  # For token prediction accuracy
+    
+    # For perplexity distribution
+    batch_perplexities = []
+    token_losses = []
     
     with torch.no_grad():
         for i, batch in enumerate(dataloader):
@@ -297,10 +302,48 @@ def evaluate(model, dataloader, config, device, fp16=False):
             else:
                 logits, loss = model(input_ids, labels)
             
+            # Calculate token prediction accuracy
+            predictions = torch.argmax(logits, dim=-1)
+            mask = (labels != -100)  # Ignore padding tokens
+            correct = ((predictions == labels) & mask).sum().item()
+            total_correct += correct
+            
+            # Track per-batch perplexity
+            batch_loss = loss.item()
+            batch_perplexities.append(math.exp(batch_loss))
+            
+            # Calculate per-token losses for visualization (sample up to 1000 tokens)
+            if len(token_losses) < 1000:
+                with torch.no_grad():
+                    # Get per-token loss
+                    log_probs = F.log_softmax(logits.view(-1, logits.size(-1)), dim=-1)
+                    token_log_probs = -log_probs.gather(1, labels.view(-1, 1))
+                    token_log_probs = token_log_probs.view(labels.shape)
+                    
+                    # Only consider non-padding tokens
+                    valid_tokens = (labels != -100).flatten()
+                    if valid_tokens.sum() > 0:
+                        valid_losses = token_log_probs.flatten()[valid_tokens]
+                        token_losses.extend(valid_losses.cpu().tolist()[:100])  # Limit to 100 tokens per batch
+            
             total_loss += loss.item() * input_ids.size(0)
             total_tokens += input_ids.size(0) * input_ids.size(1)
+            total_valid_tokens = mask.sum().item()
     
-    return total_loss / total_tokens
+    avg_loss = total_loss / total_tokens
+    perplexity = math.exp(avg_loss)
+    accuracy = total_correct / total_valid_tokens if total_valid_tokens > 0 else 0
+    
+    if return_metrics:
+        return {
+            "loss": avg_loss,
+            "perplexity": perplexity,
+            "accuracy": accuracy,
+            "batch_perplexities": batch_perplexities,
+            "token_losses": token_losses
+        }
+    
+    return avg_loss
 
 def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_from=None):
     """Train the Msingi2 model using sharded token datasets"""
@@ -526,15 +569,46 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_f
             
             # Evaluate and save checkpoint
             if global_step > 0 and global_step % training_config.eval_interval == 0:
-                val_loss = evaluate(model, valid_loader, training_config, device, training_config.fp16)
-                print(f"\nStep {global_step} | Validation loss: {val_loss:.4f}")
+                # Get detailed evaluation metrics
+                eval_metrics = evaluate(model, valid_loader, training_config, device, training_config.fp16, return_metrics=True)
+                val_loss = eval_metrics["loss"]
+                val_ppl = eval_metrics["perplexity"]
+                val_acc = eval_metrics["accuracy"]
+                
+                print(f"\nStep {global_step} | Validation loss: {val_loss:.4f} | Perplexity: {val_ppl:.2f} | Accuracy: {val_acc:.2%}")
+                
+                # Generate a sample text for qualitative evaluation
+                if hasattr(tokenizer, "decode"):
+                    try:
+                        sample_prompt = "Habari ya leo? "
+                        sample_text = generate_sample_text(model, tokenizer, sample_prompt, max_length=100)
+                        print(f"\nSample generation:\n{sample_text}\n")
+                    except Exception as e:
+                        print(f"Error generating sample: {e}")
                 
                 if training_config.use_wandb:
-                    wandb.log({
+                    # Log metrics
+                    wandb_log = {
                         "eval/loss": val_loss,
-                        "eval/perplexity": math.exp(val_loss),
-                        "eval/global_step": global_step
-                    })
+                        "eval/perplexity": val_ppl,
+                        "eval/accuracy": val_acc,
+                        "eval/global_step": global_step,
+                        "train/val_loss_ratio": epoch_loss / val_loss if epoch_loss > 0 else 0,
+                    }
+                    
+                    # Log sample text
+                    if 'sample_text' in locals():
+                        wandb_log["samples/text"] = wandb.Html(f"<pre>{sample_text}</pre>")
+                    
+                    # Create perplexity histogram
+                    if len(eval_metrics["token_losses"]) > 0:
+                        wandb_log["eval/token_loss_hist"] = wandb.Histogram(eval_metrics["token_losses"])
+                    
+                    # Create perplexity distribution plot
+                    if len(eval_metrics["batch_perplexities"]) > 0:
+                        wandb_log["eval/batch_perplexity"] = wandb.Histogram(eval_metrics["batch_perplexities"])
+                    
+                    wandb.log(wandb_log)
                 
                 # Save best model
                 if val_loss < best_val_loss:
@@ -571,19 +645,39 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_f
         
         # End of epoch
         epoch_loss = epoch_loss / epoch_tokens
-        print(f"Epoch {epoch+1}/{training_config.num_epochs} complete | Loss: {epoch_loss:.4f}")
+        epoch_ppl = math.exp(epoch_loss)
+        print(f"Epoch {epoch+1}/{training_config.num_epochs} complete | Loss: {epoch_loss:.4f} | Perplexity: {epoch_ppl:.2f}")
         
-        # Evaluate at the end of each epoch
-        val_loss = evaluate(model, valid_loader, training_config, device, training_config.fp16)
-        print(f"Epoch {epoch+1}/{training_config.num_epochs} | Validation loss: {val_loss:.4f}")
+        # Run full validation at end of epoch
+        print("Running full validation...")
+        eval_metrics = evaluate(model, valid_loader, training_config, device, training_config.fp16, return_metrics=True)
+        val_loss = eval_metrics["loss"]
+        val_ppl = eval_metrics["perplexity"]
+        val_acc = eval_metrics["accuracy"]
         
+        print(f"Validation | Loss: {val_loss:.4f} | Perplexity: {val_ppl:.2f} | Accuracy: {val_acc:.2%}")
+        
+        # Plot training vs validation loss
         if training_config.use_wandb:
-            wandb.log({
+            # Create learning curve plot
+            wandb_log = {
                 "train/epoch_loss": epoch_loss,
-                "eval/epoch_loss": val_loss,
-                "eval/epoch_perplexity": math.exp(val_loss),
-                "train/epoch": epoch + 1
-            })
+                "train/epoch_perplexity": epoch_ppl,
+                "train/epoch": epoch + 1,
+                "epoch_eval/loss": val_loss,
+                "epoch_eval/perplexity": val_ppl,
+                "epoch_eval/accuracy": val_acc,
+                "epoch_eval/train_val_gap": epoch_loss - val_loss
+            }
+            
+            # Create a custom chart for overfitting visualization
+            data = [[epoch + 1, epoch_loss, val_loss]]
+            table = wandb.Table(data=data, columns=["epoch", "train_loss", "val_loss"])
+            wandb_log["learning_curves"] = wandb.plot.line(
+                table, "epoch", ["train_loss", "val_loss"], 
+                title="Training vs Validation Loss")
+                
+            wandb.log(wandb_log)
         
         # Save epoch checkpoint
         epoch_path = os.path.join(training_config.checkpoint_dir, f"epoch-{epoch+1}")
