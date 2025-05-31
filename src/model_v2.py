@@ -107,7 +107,7 @@ class Msingi2Config:
     n_layer: int = 18
     n_head: int = 16
     n_embd: int = 768
-    dropout: float = 0.1
+    dropout: float = 0.15
     bias: bool = True  # True: bias in Linear layers and LayerNorm, False: no bias
     gradient_checkpointing: bool = True
 

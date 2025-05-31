@@ -51,17 +51,17 @@ class TrainingConfig:
         tokenizer_path: str = "tokenizer/swahili_unigram_32000/tokenizer.json",
         
         # Training settings
-        num_epochs: int = 3,
-        batch_size: int = 8,  # Reduced from 16 for larger model
-        grad_accum_steps: int = 8,  # Increased from 4 for larger model
+        num_epochs: int = 4,
+        batch_size: int = 8,  
+        grad_accum_steps: int = 8,  
         sequence_length: int = 1024,
         
         # Optimization settings
-        learning_rate: float = 1e-4,  # Reduced from 3e-4 for larger model
+        learning_rate: float = 3e-4,  
         weight_decay: float = 0.1,
         max_grad_norm: float = 1.0,
-        warmup_ratio: float = 0.05,  # Increased from 0.03 for larger model
-        min_lr_ratio: float = 0.1,  # min_lr = learning_rate * min_lr_ratio
+        warmup_ratio: float = 0.05,  
+        min_lr_ratio: float = 0.1,  
         
         # Evaluation and saving
         eval_interval: int = 500,
