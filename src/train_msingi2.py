@@ -76,7 +76,7 @@ class TrainingConfig:
         
         # Wandb settings
         use_wandb: bool = True,
-        wandb_project: str = "msingi2",
+        wandb_project: str = "msingi2_v2",  # Updated project name
         wandb_entity: Optional[str] = None,
         wandb_run_name: Optional[str] = None,
         
