@@ -277,6 +277,29 @@ def get_cosine_schedule_with_warmup(
     
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
 
+def generate_sample_text(model, tokenizer, prompt, max_length=100, temperature=0.8, top_p=0.9, top_k=40, repetition_penalty=1.1):
+    """
+    Generate sample text from the model given a prompt
+    """
+    # Encode the prompt
+    input_ids = tokenizer.encode(prompt, return_tensors="pt").to(model.device)
+    
+    # Generate text
+    with torch.no_grad():
+        output_ids = model.generate(
+            input_ids,
+            max_new_tokens=max_length,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty
+        )
+    
+    # Decode the generated text
+    generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    
+    return generated_text
+
 def evaluate(model, dataloader, config, device, fp16=False, return_metrics=False):
     """Evaluate model on validation data"""
     model.eval()
