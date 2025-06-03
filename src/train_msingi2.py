@@ -716,7 +716,7 @@ def main():
     parser.add_argument("--tokens-dir", type=str, default="msingi_tokens", help="Directory containing token shards")
     
     # Training arguments
-    parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
     parser.add_argument("--grad-accum-steps", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--seq-length", type=int, default=1024, help="Sequence length")
