@@ -739,9 +739,9 @@ def main():
     parser.add_argument("--wandb-run-name", type=str, default=None, help="WandB run name")
     
     # Model arguments
-    parser.add_argument("--n-layer", type=int, default=24, help="Number of layers")
+    parser.add_argument("--n-layer", type=int, default=18, help="Number of layers")
     parser.add_argument("--n-head", type=int, default=16, help="Number of attention heads")
-    parser.add_argument("--n-embd", type=int, default=1024, help="Embedding dimension")
+    parser.add_argument("--n-embd", type=int, default=768, help="Embedding dimension")
     
     args = parser.parse_args()
     
