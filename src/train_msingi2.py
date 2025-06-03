@@ -716,7 +716,7 @@ def main():
     parser.add_argument("--tokens-dir", type=str, default="msingi_tokens", help="Directory containing token shards")
     
     # Training arguments
-    parser.add_argument("--epochs", type=int, default=3, help="Number of training epochs")
+    parser.add_argument("--epochs", type=int, default=4, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=8, help="Batch size")
     parser.add_argument("--grad-accum-steps", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--seq-length", type=int, default=1024, help="Sequence length")
@@ -733,8 +733,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     
     # WandB arguments
-    parser.add_argument("--wandb", action="store_true", help="Enable WandB logging")
-    parser.add_argument("--wandb-project", type=str, default="msingi2", help="WandB project name")
+    parser.add_argument("--no-wandb", action="store_true", help="Disable WandB logging")
+    parser.add_argument("--wandb-project", type=str, default="msingi2_v2", help="WandB project name")
     parser.add_argument("--wandb-entity", type=str, default=None, help="WandB entity name")
     parser.add_argument("--wandb-run-name", type=str, default=None, help="WandB run name")
     
@@ -779,7 +779,7 @@ def main():
         checkpoint_dir=args.checkpoint_dir,
         seed=args.seed,
         
-        use_wandb=args.wandb,
+        use_wandb=not args.no_wandb,
         wandb_project=args.wandb_project,
         wandb_entity=args.wandb_entity,
         wandb_run_name=args.wandb_run_name
