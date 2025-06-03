@@ -12,6 +12,9 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any, Union, Tuple
 import inspect
 
+# Set tokenizers parallelism environment variable to avoid warnings
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 from model_v2 import Msingi2, Msingi2Config
 from torch.utils.data import Dataset, DataLoader
 from torch.nn import functional as F
@@ -598,7 +601,8 @@ def train(model_config: Msingi2Config, training_config: TrainingConfig, resume_f
                 val_ppl = eval_metrics["perplexity"]
                 val_acc = eval_metrics["accuracy"]
                 
-                print(f"\nStep {global_step} | Validation loss: {val_loss:.4f} | Perplexity: {val_ppl:.2f} | Accuracy: {val_acc:.2%}")
+                # Convert accuracy to percentage for display (0-100 scale)
+                print(f"\nStep {global_step} | Validation loss: {val_loss:.4f} | Perplexity: {val_ppl:.2f} | Accuracy: {val_acc*100:.2f}%")
                 
                 # Generate a sample text for qualitative evaluation
                 if hasattr(tokenizer, "decode"):
