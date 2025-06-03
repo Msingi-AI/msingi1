@@ -1,10 +1,14 @@
-# Msingi1: Scaling Language Modelling Through Small-Scale Pretraining
+# Msingi: Scaling Language Modelling Through Small-Scale Pretraining
 
-## What is Msingi1?
+## What is Msingi?
 
-Msingi1 ("Foundation" in Swahili) is our attempt to build a decent language model for Swahili, one of Africa's most widely spoken languages. We started small, but have now scaled up to a 336M parameter model that can generate grammatically correct Swahili text.
+Msingi ("Foundation" in Swahili) is our attempt to build decent language models for Swahili, one of Africa's most widely spoken languages. We started small, but have scaled up to multiple models that can generate grammatically correct Swahili text.
 
 The project began with a simple question: *Can we build useful language models for African languages without billions of parameters and massive compute?* This README documents our journey, what we've learned, and where we're headed.
+
+## Msingi1: Our First 336M Model
+
+Msingi1 was our first attempt at a Swahili language model with 336M parameters that can generate grammatically correct Swahili text.
 
 ## The Model: What's Under the Hood
 
@@ -22,10 +26,11 @@ We didn't start this big. Our first experiments were with tiny 28M parameter mod
 - **Memory Tricks**: We use gradient checkpointing and mixed precision to train bigger models without needing expensive hardware
 - **Data Loading**: We chop our dataset into bite-sized pieces (shards) that can be loaded efficiently without running out of memory
 
-## Training: How We Taught It Swahili
+## Training: How We Taught Our Models Swahili
 
 ### The Data
 
+#### Msingi1 Dataset
 We fed Msingi1 a diverse diet of Swahili text - about 88.6 million tokens (roughly 68.2 million words) from:
 
 - News articles (lots of these!)
@@ -37,23 +42,59 @@ We fed Msingi1 a diverse diet of Swahili text - about 88.6 million tokens (rough
 
 We split this into a training set (90%) and validation set (10%) to make sure the model was learning properly.
 
+#### Msingi1 153M Dataset
+For Msingi1 153M, we significantly expanded our dataset to 705 million tokens, approximately 8 times larger than the Msingi1 dataset. This expanded corpus includes:
+
+- Additional news sources from East Africa
+- More contemporary web content
+- Educational materials and academic texts
+- Government publications and legal documents
+- Community forums and social media content
+- Literature and creative writing
+
+The larger dataset provides better coverage of diverse language use and improves the model's ability to generate coherent text across different domains. With 153M parameters and 705M tokens, Msingi1 153M has a much better token-to-parameter ratio of approximately 4.6:1, which helps prevent overfitting while enabling better language understanding.
+
 ### The Training Process
 
-Training was surprisingly efficient:
+#### Msingi1 Training
+Training Msingi1 was surprisingly efficient:
 
 - Each epoch (full pass through the data) took only about 30 minutes on good GPU hardware
-- We processed 8 examples at a time, but used a trick called gradient accumulation to effectively train on 64 examples at once
-- We've completed 3 epochs so far and are extending to 5 to see if we can improve further
+- We processed 8 examples at a time, but used gradient accumulation to effectively train on 64 examples at once
+- We completed 3 epochs and extended to 5 to see if we could improve further
+
+#### Msingi1 153M Training
+For Msingi1 153M, we leveraged an A100 GPU to handle the larger dataset and implemented several optimizations:
+
+- Training ran for 4 epochs with a learning rate of 3e-4 and cosine decay schedule
+- Used batch size of 8 with gradient accumulation steps of 8 (effective batch size of 64)
+- Implemented mixed precision (FP16) training for memory efficiency
+- Utilized gradient checkpointing to reduce memory usage
+- Added Weights & Biases integration for detailed training monitoring
+- Generated sample text during evaluation to assess qualitative improvements
+- Saved checkpoints at regular intervals (every 1000 steps) and at the end of each epoch
 
 ### What We've Learned
 
-After training for 3 epochs:
+#### Insights from Msingi1
+After training Msingi1 for 3 epochs:
 
 1. The model learned Swahili grammar remarkably well - it handles the complex prefix and suffix systems that make Swahili challenging
 2. Training is surprisingly fast - each epoch takes just 30 minutes on decent hardware
 3. The model has a "news bias" - it tends to drift toward news-style content because that's what dominated our training data
 
-## Results: What Msingi1 Can (and Can't) Do
+#### Insights from Msingi1 153M
+Our experience with Msingi1 153M has taught us additional lessons:
+
+1. **Smaller can be better**: The 153M parameter model (down from 336M) with more data achieves better results than the larger model
+2. **Data diversity matters**: The expanded dataset helps reduce domain bias and improves generation quality
+3. **Monitoring is essential**: Tracking metrics through WandB provides valuable insights into training dynamics
+4. **Parameter efficiency**: A better token-to-parameter ratio (4.6:1) leads to more efficient learning
+5. **Regularization techniques**: Increased dropout (0.15) helps prevent overfitting despite the smaller model size
+
+## Results: What Our Models Can (and Can't) Do
+
+### Msingi1 Text Generation
 
 Let's look at what happens when we ask Msingi1 to complete a simple greeting:
 
@@ -84,17 +125,89 @@ These examples show both the strengths and limitations of our current model:
 
 This behavior makes perfect sense when you consider what the model learned from: our training data was heavily weighted toward news articles and government documents. The model is simply doing what it learned to do - continue text in the style it saw most often during training.
 
-## What's Next: Improving Msingi1
+### Msingi1 153M Text Generation
 
-We're actively working to make Msingi1 better:
+Msingi1 153M shows significant improvements in coherence and topic adherence. Here's an example of Msingi1 153M completing the same greeting prompt:
 
-1. **More Training**: We're currently running epochs 4-5 to see if more training helps with coherence
+**Prompt:** "Habari ya leo, jina langu ni"
 
-2. **Better Text Generation**: We're experimenting with different settings (temperature, top-p sampling) to reduce the "news brain" effect
+**Sample 1:**
+```
+"Habari ya leo, jina langu ni Maria. Ninafurahi kukutana nawe leo. Mimi ni mwanafunzi wa chuo kikuu cha Nairobi, ninasomea sayansi ya kompyuta. Ninapenda kusoma, kusikiliza muziki, na kutembea na marafiki zangu wakati wa mapumziko. Je, wewe unaitwa nani? Unapenda kufanya nini wakati wa starehe?"
+```
 
-3. **Conversation Tuning**: We're planning to fine-tune the model on conversational data to help it maintain topic focus
+**Sample 2:**
+```
+"Habari ya leo, jina langu ni Juma. Nimekuja hapa kwa ajili ya mahojiano ya kazi. Nina uzoefu wa miaka mitano katika sekta ya teknolojia, hasa katika utengenezaji wa programu za simu. Nimehitimu kutoka Chuo Kikuu cha Dar es Salaam na shahada ya kwanza katika Sayansi ya Kompyuta. Ninatarajia kuwa sehemu ya timu yenu inayokua haraka."
+```
 
-4. **Better Evaluation**: We're developing Swahili-specific ways to measure how good the model actually is
+### What's Improved with Msingi1 153M?
+
+**The Good:**
+- Much better topic adherence - stays with the personal introduction theme
+- More natural conversational flow with appropriate follow-up content
+- Diverse outputs that make sense in different contexts (casual conversation vs. job interview)
+- Maintains consistent persona throughout the generation
+- Grammatically correct with natural Swahili phrasing
+
+**Still Working On:**
+- Occasional tendency to be overly formal in casual contexts
+- Limited creative storytelling abilities
+- Some repetitive patterns in longer generations
+
+The improvements in Msingi1 153M demonstrate the value of our optimization approach: a smaller but more efficient model (153M vs 336M parameters) trained on significantly more data (705M vs 88.6M tokens) with better regularization techniques.
+
+## Msingi1 153M: Our Optimized Model
+
+Building on what we learned from Msingi1, we developed Msingi1 153M - a more efficient model that balances performance with computational efficiency.
+
+### The Model Architecture
+
+Msingi1 153M is a 153 million parameter transformer language model with the following specifications:
+
+- **Size**: 18 layers deep with 16 attention heads (153M parameters total)
+- **Embedding Dimension**: 768 (reduced from 1024 in Msingi1)
+- **Context**: Can handle texts up to 1024 tokens long
+- **Vocabulary**: Same 32,000 unique Swahili word pieces using Unigram tokenizer
+- **Dropout**: Increased to 0.15 (from 0.1) for better regularization
+
+### Training Improvements
+
+Msingi1 153M was trained on a larger dataset with improved techniques:
+
+- **Dataset Size**: 705M training tokens (significantly larger than Msingi1's dataset)
+- **Hardware**: Trained on an A100 GPU for faster processing
+- **Training Duration**: 4 epochs with effective batch size of 64
+- **Optimization**: Learning rate of 3e-4 with cosine decay schedule
+- **Memory Efficiency**: Uses gradient checkpointing, mixed precision (FP16), and gradient accumulation
+
+### Performance Benefits
+
+Despite having fewer parameters than Msingi1, Msingi1 153M offers several advantages:
+
+- **Better Token-to-Parameter Ratio**: ~4.6 tokens per parameter (vs ~2.1 in Msingi1)
+- **Reduced Overfitting Risk**: Smaller model with more data and increased dropout
+- **Faster Training and Inference**: Smaller size means quicker processing
+- **Enhanced Monitoring**: Detailed tracking of perplexity, accuracy, and token-level metrics
+
+### Sample Generation
+
+Msingi1 153M generates more coherent and contextually appropriate Swahili text, with improved handling of complex grammatical structures and reduced tendency to drift off-topic.
+
+## What's Next: Improving Our Models
+
+We're actively working to make our Msingi models better:
+
+1. **Fine-tuning Msingi1 153M**: We're planning collaborative fine-tuning sessions to adapt the model for specific applications:
+   - Instruction following for task-oriented use cases
+   - Domain-specific adaptations (legal, medical, educational)
+   - Conversational abilities to maintain topic coherence
+
+2. **Better Text Generation**: We're experimenting with different settings (temperature, top-p sampling, repetition penalty) to improve text quality and reduce biases
+
+3. **Evaluation Framework**: We're developing comprehensive Swahili-specific benchmarks to measure model performance across different tasks
+
+4. **Efficient Deployment**: We're exploring model compression techniques (quantization, pruning) to enable deployment on more resource-constrained environments
 
 The current model is just the beginning - we see it as a foundation (hence the name "Msingi") that we can build upon to create truly useful Swahili language AI.
 
