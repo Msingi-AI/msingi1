@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--tokenizer-path", type=str, 
                         default="tokenizer/swahili_unigram_32000/tokenizer.json",
                         help="Path to the tokenizer file")
-    parser.add_argument("--prompt", type=str, default="Elimu ni,", 
+    parser.add_argument("--prompt", type=str, default="Elimu ni Msingi Bora Katika Jamii Yetu,", 
                         help="Prompt to start generation with")
     parser.add_argument("--max-tokens", type=int, default=100, 
                         help="Maximum number of tokens to generate")
