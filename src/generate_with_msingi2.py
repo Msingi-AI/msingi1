@@ -50,6 +50,9 @@ def main():
                         help="Run in interactive mode")
     parser.add_argument("--slow-generation", action="store_true",
                         help="Generate text slowly, showing each token as it's generated")
+    parser.add_argument('--clean', action='store_true', help='Clean generated text')
+    parser.add_argument('--constrained', action='store_true', help='Use constrained prompt format')
+    parser.add_argument('--tune_params', action='store_true', help='Use tuned parameters for better quality')
     
     args = parser.parse_args()
     
@@ -117,6 +120,16 @@ def main():
     
     print(f"Model loaded successfully with {model.get_num_params():,} parameters")
     
+    # Apply parameter tuning if requested
+    if args.tune_params:
+        args.temperature = max(0.7, min(args.temperature, 0.9))
+        args.top_k = 30
+        args.repetition_penalty = 1.2
+
+    # Apply constrained prompt format if requested
+    if args.constrained:
+        args.prompt = f"{args.prompt} " + ("Ninafurahi kuwa hapa leo kwa sababu" if "leo" in args.prompt else "Ninafurahi kukutana nawe. Mimi ni")
+
     # Define guided generation function
     def guided_generation(input_ids, topic=None):
         """Generate text with guidance to improve coherence"""
@@ -295,8 +308,10 @@ def main():
                     )
             
             # Decode and display
-            generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-            print(f"\nGenerated:\n{generated_text}")
+            output_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            if args.clean:
+                output_text = clean_generation(output_text)
+            print(f"\nGenerated:\n{output_text}")
     
     # Run interactive mode if requested
     if args.interactive:
@@ -312,6 +327,12 @@ def main():
         print(f"Guided generation: enabled" + (f" (topic: {args.topic_guidance})" if args.topic_guidance else ""))
     print(f"Generating {args.num_samples} samples, each with max {args.max_tokens} tokens\n")
     
+    def clean_generation(text):
+        """Clean generated text by removing problematic quotes and limiting length"""
+        text = text.replace('"', '').replace('“', '').replace('”', '')
+        sentences = text.split('.')
+        return '. '.join(sentences[:3]) + '.'  # Return first 3 sentences
+
     for i in range(args.num_samples):
         print(f"\n----- Sample {i+1} -----")
         
@@ -364,8 +385,10 @@ def main():
         
         # Decode if not already displayed
         if not args.slow_generation:
-            generated_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
-            print(generated_text)
+            output_text = tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            if args.clean:
+                output_text = clean_generation(output_text)
+            print(f"\nGenerated:\n{output_text}")
     
     print("\n===== GENERATION COMPLETE =====")
 

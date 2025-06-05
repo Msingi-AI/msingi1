@@ -73,6 +73,7 @@ For Msingi1 153M, we leveraged an A100 GPU to handle the larger dataset and impl
 - Added Weights & Biases integration for detailed training monitoring
 - Generated sample text during evaluation to assess qualitative improvements
 - Saved checkpoints at regular intervals (every 1000 steps) and at the end of each epoch
+- Total training time: 9h 21m 8s on A100 GPU
 
 ### What We've Learned
 
