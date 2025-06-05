@@ -20,18 +20,18 @@ def main():
     parser.add_argument("--tokenizer-path", type=str, 
                         default="tokenizer/swahili_unigram_32000/tokenizer.json",
                         help="Path to the tokenizer file")
-    parser.add_argument("--prompt", type=str, default="Elimu ni Msingi Bora Katika Jamii Yetu,", 
+    parser.add_argument("--prompt", type=str, default="Elimu ni msingi wa maendeleo ya jamii. Eleza kwa kina jinsi elimu inavyoweza kuwawezesha wanajamii.,", 
                         help="Prompt to start generation with")
     parser.add_argument("--max-tokens", type=int, default=100, 
                         help="Maximum number of tokens to generate")
-    parser.add_argument("--temperature", type=float, default=0.8, 
+    parser.add_argument("--temperature", type=float, default=0.7, 
                         help="Temperature for sampling (higher = more random)")
     parser.add_argument("--top-k", type=int, default=50, 
                         help="Top-k sampling (0 = disable)")
     parser.add_argument("--top-p", type=float, default=0.95, 
                         help="Top-p (nucleus) sampling (0 = disable)")
     parser.add_argument("--repetition-penalty", type=float, default=1.1, 
-                        help="Repetition penalty (1.0 = no penalty)")
+                        help="Repetition penalty (1.2 = no penalty)")
     parser.add_argument("--presence-penalty", type=float, default=0.0,
                         help="Presence penalty (0.0 = no penalty)")
     parser.add_argument("--frequency-penalty", type=float, default=0.0,
