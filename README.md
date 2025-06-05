@@ -1,37 +1,29 @@
-# Msingi: Scaling Language Modelling Through Small-Scale Pretraining
+# Msingi1: Scaling Language Modelling Through Small-Scale Pretraining
 
-## What is Msingi?
+## What is Msingi1?
 
 Msingi ("Foundation" in Swahili) is our attempt to build decent language models for Swahili, one of Africa's most widely spoken languages. We started small, but have scaled up to multiple models that can generate grammatically correct Swahili text.
 
 The project began with a simple question: *Can we build useful language models for African languages without billions of parameters and massive compute?* This README documents our journey, what we've learned, and where we're headed.
 
-## Msingi1: Our First 336M Model
+## Msingi1: 153M Model
 
 Msingi1 was our first attempt at a Swahili language model with 336M parameters that can generate grammatically correct Swahili text.
 
 ## The Model: What's Under the Hood
 
-Msingi1 is a 336 million parameter transformer language model - think of it as a smaller cousin to models like GPT-2. Here's what makes it tick:
+Msingi1 is a 153 million parameter transformer language model - think of it as a smaller cousin to models like GPT-2. Here's what makes it tick:
 
-- **Size**: 24 layers deep with 16 attention heads (336M parameters total)
+- **Size**: 18 layers deep with 16 attention heads 
 - **Context**: Can handle texts up to 1024 tokens long
 - **Vocabulary**: Understands 32,000 unique Swahili word pieces
-
-### Our Journey to 336M
-
-We didn't start this big. Our first experiments were with tiny 28M parameter models, then we tried 110M, and now we're at 336M. Each step taught us something important:
-
-- **Position Embeddings**: We started with fancy Rotary Position Embeddings (RoPE), but found that old-school learned position embeddings actually work better for Swahili
-- **Memory Tricks**: We use gradient checkpointing and mixed precision to train bigger models without needing expensive hardware
-- **Data Loading**: We chop our dataset into bite-sized pieces (shards) that can be loaded efficiently without running out of memory
 
 ## Training: How We Taught Our Models Swahili
 
 ### The Data
 
 #### Msingi1 Dataset
-We fed Msingi1 a diverse diet of Swahili text - about 88.6 million tokens (roughly 68.2 million words) from:
+We fed Msingi1 a diverse diet of Swahili text - about 705 million tokens from:
 
 - News articles (lots of these!)
 - Government documents
@@ -40,7 +32,7 @@ We fed Msingi1 a diverse diet of Swahili text - about 88.6 million tokens (rough
 - Wikipedia articles
 - Web content
 
-We split this into a training set (90%) and validation set (10%) to make sure the model was learning properly.
+We split this into a training set (95%) and validation set (5%) to make sure the model was learning properly.
 
 #### Msingi1 153M Dataset
 For Msingi1 153M, we significantly expanded our dataset to 705 million tokens, approximately 8 times larger than the Msingi1 dataset. This expanded corpus includes:
