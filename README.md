@@ -22,20 +22,8 @@ Msingi1 is a 153 million parameter transformer language model - think of it as a
 
 ### The Data
 
-#### Msingi1 Dataset
-We fed Msingi1 a diverse diet of Swahili text - about 705 million tokens from:
-
-- News articles (lots of these!)
-- Government documents
-- Literature and books
-- Religious texts
-- Wikipedia articles
-- Web content
-
-We split this into a training set (95%) and validation set (5%) to make sure the model was learning properly.
-
 #### Msingi1 153M Dataset
-For Msingi1 153M, we significantly expanded our dataset to 705 million tokens, approximately 8 times larger than the Msingi1 dataset. This expanded corpus includes:
+For Msingi1 153M, we significantly expanded our dataset to 705 million tokens, approximately 8 times larger than the original Msingi1 dataset. This expanded corpus includes:
 
 - Additional news sources from East Africa
 - More contemporary web content
