@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--tokenizer-path", type=str, 
                         default="tokenizer/swahili_unigram_32000/tokenizer.json",
                         help="Path to the tokenizer file")
-    parser.add_argument("--prompt", type=str, default="Hujambo Ndugu, Wafanya nini?.", 
+    parser.add_argument("--prompt", type=str, default="Habari ya leo, waitwa nani?", 
                         help="Prompt to start generation with")
     parser.add_argument("--max-tokens", type=int, default=100, 
                         help="Maximum number of tokens to generate")
@@ -30,7 +30,7 @@ def main():
                         help="Top-k sampling (0 = disable)")
     parser.add_argument("--top-p", type=float, default=0.95, 
                         help="Top-p (nucleus) sampling (0 = disable)")
-    parser.add_argument("--repetition-penalty", type=float, default=1.1, 
+    parser.add_argument("--repetition-penalty", type=float, default=1.2, 
                         help="Repetition penalty (1.2 = no penalty)")
     parser.add_argument("--presence-penalty", type=float, default=0.0,
                         help="Presence penalty (0.0 = no penalty)")
