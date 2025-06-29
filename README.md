@@ -521,7 +521,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Contact and Support
 
-- **Email**: kiplangat@msingi.ai
+- **Email**: korirkiplangat22@gmail.com
 - **GitHub Issues**: [Report bugs, request features, or share ideas](https://github.com/Msingi-AI/msingi1/issues)
 - **Discussions**: [Join our community](https://github.com/Msingi-AI/msingi1/discussions)
 
