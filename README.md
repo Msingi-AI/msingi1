@@ -128,13 +128,6 @@ python src/download_mc4_swahili.py
 # - data/valid.txt (5% of data)
 ```
 
-**Dataset Statistics:**
-- **Total Size**: ~378 MB
-- **Total Samples**: 2,682,881 lines of text
-- **Total Words**: 63,107,167
-- **Split Ratio**: 90/10 (train/validation)
-- **Average Words Per Line**: 23.52
-
 ### Dataset Sharding for Efficient Training
 
 To handle large datasets efficiently, we use a sharding approach that processes data in manageable chunks:
