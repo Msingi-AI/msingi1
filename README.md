@@ -560,10 +560,9 @@ We're actively working to improve our Msingi models:
 
 The current model is just the beginning - we see it as a foundation (hence the name "Msingi") that we can build upon to create truly useful Swahili language AI.
 
-**We need your help to accelerate the post-training phase and collaborate on our new project!** Whether you're a researcher, developer, or Swahili speaker, your contributions can make a real difference in advancing Swahili language technology.
+**We need your help to accelerate the post-training phase and collaborate on our new project! (AkiliX)** Whether you're a researcher, developer, or Swahili speaker, your contributions can make a real difference in advancing Swahili language technology.
 
 **Create issues, share ideas, and join us in building the future of African language AI!**
 
----
 
-**Made with dedication for Swahili and African languages** 
+**Made with dedication for Swahili** 
