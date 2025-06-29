@@ -97,7 +97,7 @@ All models use a vocabulary size of 32,000. The embedding dimensions scale with 
 | Model Name | Layers | Embedding Dimension | Positional Embeddings | Parameters (approx) |
 |------------|--------|-------------------|---------------------|-------------------|
 | Msingi-Spinner | 12 | 768 | RoPE | 85M |
-| Msingi-Mzizi | 12 | 768 | Learned | 85M |
+| Msingi-Mzizi | 12 | 768 | Learned | 110M |
 | Msingi-Kali | 18 | 768 | Learned | 153M |
 | Msingi-Hodari | 24 | 1024 | Learned | 336M |
 | Msingi-Bingwa | 36 | 1024 | Learned | 504M |
