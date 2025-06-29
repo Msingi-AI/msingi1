@@ -86,23 +86,23 @@ python src/test_model.py --model-path best_model/
 
 We have reproduced and trained the following models, in this order:
 
-1. **Msingi1-12L-RoPE**: 12 layers, ~85M parameters, RoPE positional embeddings (our first successful reproduction)
-2. **Msingi1-12L-Traditional**: 12 layers, ~85M parameters, traditional (learned) positional embeddings
-3. **Msingi1-18L-Traditional**: 18 layers, ~153M parameters, traditional positional embeddings
-4. **Msingi1-24L-Traditional**: 24 layers, ~336M parameters, traditional positional embeddings
-5. **Msingi1-36L-Traditional**: 36 layers, ~504M parameters, traditional positional embeddings
+1. **Msingi-Spinner**: 12 layers, ~85M parameters, RoPE positional embeddings (our first successful reproduction)
+2. **Msingi-Mzizi** (mzizi = root/foundation): 12 layers, ~85M parameters, traditional (learned) positional embeddings
+3. **Msingi-Kali** (kali = sharp/fierce): 18 layers, ~153M parameters, traditional positional embeddings
+4. **Msingi-Hodari** (hodari = skilled/capable): 24 layers, ~336M parameters, traditional positional embeddings
+5. **Msingi-Bingwa** (bingwa = expert/master): 36 layers, ~504M parameters, traditional positional embeddings
 
 All models use a vocabulary size of 32,000. The embedding dimensions scale with model size: 768 dimensions for 12 and 18 layers, and 1024 dimensions for 24 and 36 layers. Parameter counts are approximate and rounded for clarity.
 
 | Model Name | Layers | Embedding Dimension | Positional Embeddings | Parameters (approx) |
 |------------|--------|-------------------|---------------------|-------------------|
-| Msingi1-12L-RoPE | 12 | 768 | RoPE | 85M |
-| Msingi1-12L-Traditional | 12 | 768 | Learned | 85M |
-| Msingi1-18L-Traditional | 18 | 768 | Learned | 153M |
-| Msingi1-24L-Traditional | 24 | 1024 | Learned | 336M |
-| Msingi1-36L-Traditional | 36 | 1024 | Learned | 504M |
+| Msingi-Spinner | 12 | 768 | RoPE | 85M |
+| Msingi-Mzizi | 12 | 768 | Learned | 85M |
+| Msingi-Kali | 18 | 768 | Learned | 153M |
+| Msingi-Hodari | 24 | 1024 | Learned | 336M |
+| Msingi-Bingwa | 36 | 1024 | Learned | 504M |
 
-We recommend reproducing the **12-layer models** (either RoPE or traditional positional embeddings) for most users, as they offer a good balance of performance and computational requirements. Larger models (18, 24, 36 layers) are in progress and will be released soon.
+We recommend reproducing the **12-layer models** (either Msingi-Spinner with RoPE or Msingi-Mzizi with traditional positional embeddings) for most users, as they offer a good balance of performance and computational requirements. Larger models (Msingi-Kali, Msingi-Hodari, Msingi-Bingwa) are in progress and will be released soon.
 
 ## Training Data and Process
 
@@ -128,6 +128,12 @@ python src/download_mc4_swahili.py
 # - data/valid.txt (5% of data)
 ```
 
+**Dataset Statistics:**
+- **Total Size**: ~378 MB
+- **Total Samples**: 2,682,881 lines of text
+- **Total Words**: 63,107,167
+- **Split Ratio**: 90/10 (train/validation)
+- **Average Words Per Line**: 23.52
 
 ### Dataset Sharding for Efficient Training
 
@@ -361,7 +367,7 @@ print(response.json()["generated_text"])
 from msingi1 import MsingiGenerator
 
 # Initialize generator
-generator = MsingiGenerator.from_pretrained("msingi2-12l")
+generator = MsingiGenerator.from_pretrained("msingi-mzizi")
 
 # Generate text
 text = generator.generate("Habari ya leo", max_length=100)
@@ -374,7 +380,7 @@ print(text)
 
 **Prompt:** "Habari ya leo, jina langu ni" (Hello, my name is)
 
-**Experimental Msingi2 Output:**
+**Experimental Msingi-Mzizi Output:**
 ```
 "Habari ya leo, jina langu ni Maria. Ninafurahi kukutana nawe leo. Mimi ni mwanafunzi wa chuo kikuu cha Nairobi, ninasomea sayansi ya kompyuta. Ninapenda kusoma, kusikiliza muziki, na kutembea na marafiki zangu wakati wa mapumziko. Je, wewe unaitwa nani? Unapenda kufanya nini wakati wa starehe?"
 ```
@@ -545,7 +551,7 @@ If you use Msingi1 in your research, please cite:
 
 We're actively working to improve our Msingi models:
 
-1. **Model Releases**: Soon releasing 12/18/24/36 layer variants
+1. **Model Releases**: Soon releasing Msingi-Spinner, Msingi-Mzizi, Msingi-Kali, Msingi-Hodari, and Msingi-Bingwa variants
 2. **Post-Training Phase**: Instruction tuning and fine-tuning (needs community help!)
 3. **Better Text Generation**: Improved sampling strategies and bias reduction
 4. **Evaluation Framework**: Comprehensive Swahili-specific benchmarks
