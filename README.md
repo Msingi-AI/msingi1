@@ -102,7 +102,7 @@ All models use a vocabulary size of 32,000. The embedding dimensions scale with 
 | Msingi-Hodari | 24 | 1024 | Learned | 336M |
 | Msingi-Bingwa | 36 | 1024 | Learned | 504M |
 
-We recommend reproducing the **12-layer models** (either Msingi-Spinner with RoPE or Msingi-Mzizi with traditional positional embeddings) for most users, as they offer a good balance of performance and computational requirements. Larger models (Msingi-Kali, Msingi-Hodari, Msingi-Bingwa) are in progress and will be released soon.
+We recommend reproducing the **12-layer models** (Msingi-Mzizi) for most users, as they offer a good balance of performance and computational requirements. Larger models (Msingi-Kali, Msingi-Hodari, Msingi-Bingwa) are in progress and will be released soon. We will release all variants once entire training is done!!
 
 ## Training Data and Process
 
